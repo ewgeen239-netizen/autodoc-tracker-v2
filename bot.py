@@ -1029,11 +1029,15 @@ def tick(state):
             pass
         state["day"] = today
     # 2. пересобрать тех, кто сменил группу / отпуск в приложении или в боте
+    rebuilt = shifts_n = 0
     for u in STORE.users(rebuild="is.true"):
         try:
-            SH.rebuild_user(STORE, SCHED, u)
+            shifts_n += SH.rebuild_user(STORE, SCHED, u)
+            rebuilt += 1
         except Exception as e:
-            print("rebuild", u.get("uid"), e)
+            print(f"♻️ ошибка пересборки графика: {e}")
+    if rebuilt:
+        print(f"♻️ графики пересобраны: {rebuilt} чел., {shifts_n} смен")
     NOTIFY["last_tick"] = SH.now().isoformat()
     if NOTIFY["paused"]:
         return
@@ -1042,12 +1046,14 @@ def tick(state):
     a = (today - timedelta(days=1)).isoformat()
     b = (today + timedelta(days=1)).isoformat()
     rows = STORE.get_shifts(since=a, until=b)
+    sent = {}
     for uid, key, kind, row in SH.plan(rows, users):
         if not STORE.claim(uid, key):
             continue                                  # уже отправлено
         try:
             send(int(uid), notify_text(kind, row), notify_kb_for(kind), effect="party" if kind == "pay" else None)
             NOTIFY["sent"] += 1
+            sent[kind] = sent.get(kind, 0) + 1
         except ApiTelegramException as e:
             NOTIFY["failed"] += 1
             if gone(e):
@@ -1058,6 +1064,14 @@ def tick(state):
             NOTIFY["failed"] += 1
             STORE.unclaim(uid, key)
         time.sleep(0.05)
+    if sent:
+        print("🔔 отправлено: " + ", ".join(f"{KIND_RU.get(k, k)} ×{n}" for k, n in sent.items()))
+    # раз в час — короткая строка, что поток жив (без имён и id)
+    hour = SH.now().strftime("%Y-%m-%d %H")
+    if state.get("hour") != hour:
+        state["hour"] = hour
+        print(f"💓 оповещения работают: смен сегодня–завтра {len(rows)}, активных {len(users)}, "
+              f"с запуска ушло {NOTIFY['sent']}, не дошло {NOTIFY['failed']}")
 
 
 def notifier():
@@ -1128,5 +1142,5 @@ if __name__ == "__main__":
         except ApiTelegramException as e:
             if e.error_code != 409:
                 raise
-            print("⏳ 409: работает другой экземпляр бота с этим токеном — жду 15 с")
+            print("⏳ 409: старый экземпляр бота ещё не остановился (обычно при передеплое) — жду 15 с")
             time.sleep(15)
