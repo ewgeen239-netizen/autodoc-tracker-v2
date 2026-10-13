@@ -188,6 +188,8 @@
    *    month:'YYYY-MM', rate, hours (всего отработано по графику, без сверхурочных),
    *    nightHours (из них в 22–6), urlopHours, ovt50, ovt100, ovtNight (сверхурочные в 22–6),
    *    urlopVar (средняя переменная часть за час отпуска, zł/ч — см. urlopAverage),
+   *    dark (Dodatek DARK, брутто), ekw (эквиваленты за одежду/стирку — без налога),
+   *    deduct (удержания из «на руки»: benefit и т.п.), ytd (брутто с начала года до месяца — для лимита ulga),
    *    bonus (премия за пики, брутто), extra (прочие доплаты брутто),
    *    young:true|false, kup:'local'|'commute', pit2:true|false, ppk:true|false,
    *    nightBasis:'min'|'own'
@@ -214,6 +216,7 @@
       ovt50: r2(o50 * rate * 1.5),
       ovt100: r2(o100 * rate * 2),
       bonus: r2(Math.max(0, +inp.bonus || 0)),
+      dark: r2(Math.max(0, +inp.dark || 0)),
       extra: r2(Math.max(0, +inp.extra || 0)),
     };
     const brutto = r2(Object.values(parts).reduce((s, v) => s + v, 0));
@@ -224,14 +227,22 @@
     const ppkEmp = inp.ppk ? r2(brutto * TAX.PPK_EMP) : 0;
     const ppkEr = inp.ppk ? r2(brutto * TAX.PPK_ER) : 0;   // взнос работодателя — доход для PIT
     const kup = TAX.KUP[inp.kup === 'commute' ? 'commute' : 'local'];
-    const pitBase = brutto > 0 ? Math.max(0, Math.round(brutto - zus - kup + ppkEr)) : 0;
-    const pit = inp.young ? 0 : Math.max(0, Math.round(pitBase * TAX.PIT - (inp.pit2 === false ? 0 : TAX.PIT_REDUCE)));
-    const netto = r2(brutto - zus - health - pit - ppkEmp);
+    // Ulga dla młodych освобождает доход до 85 528 zł в год. Когда с начала года
+    // набралось больше, PIT считается с той части, что вышла за лимит.
+    const ytd = Math.max(0, +inp.ytd || 0);
+    const exemptLeft = inp.young ? Math.max(0, TAX.YOUNG_LIMIT - ytd) : 0;
+    const taxable = inp.young ? Math.max(0, brutto - exemptLeft) : brutto;
+    const share = brutto > 0 ? taxable / brutto : 0;
+    const pitBase = taxable > 0 ? Math.max(0, Math.round(taxable - zus * share - kup + ppkEr)) : 0;
+    const pit = taxable > 0 ? Math.max(0, Math.round(pitBase * TAX.PIT - (inp.pit2 === false ? 0 : TAX.PIT_REDUCE))) : 0;
+    const ekw = r2(Math.max(0, +inp.ekw || 0));            // эквиваленты: без ZUS и PIT
+    const deduct = r2(Math.max(0, +inp.deduct || 0));
+    const netto = r2(brutto - zus - health - pit - ppkEmp + ekw - deduct);
 
     return { month: mk, rate, nominal: nom, minHourly: r2(minHourly), nightRate: r2(nightRate),
              urlopVar: r2(urlopVar), urlopRate: r2(urlopRate),
-             parts, brutto, zus, zusParts, health, ppkEmp, ppkEr, kup, pitBase, pit, netto,
-             young: !!inp.young };
+             parts, brutto, zus, zusParts, health, ppkEmp, ppkEr, kup, pitBase, pit, ekw, deduct, netto,
+             young: !!inp.young, taxable: r2(taxable), exemptLeft: r2(exemptLeft) };
   }
 
   // ── отпускные: средняя переменная часть за час ────────────────────
@@ -243,11 +254,17 @@
     const V = ok.reduce((s, m) => s + (+m.var || 0), 0), H = ok.reduce((s, m) => s + m.hours, 0);
     return { perHour: H > 0 ? r2(V / H) : 0, months: ok.length, var: r2(V), hours: H };
   }
-  // Переменная часть одного месяца из результата salary().
+  // Переменная часть одного месяца из результата salary(): премия, сверхурочные
+  // целиком, ночные и Dodatek DARK (так считает AutoDoc).
   const variableOf = (res, inp) => ({
-    var: r2(res.parts.night + res.parts.ovt50 + res.parts.ovt100 + res.parts.bonus + res.parts.extra),
+    var: r2(res.parts.night + res.parts.ovt50 + res.parts.ovt100 + res.parts.bonus + res.parts.dark + res.parts.extra),
     hours: (+inp.hours || 0) + (+inp.ovt50 || 0) + (+inp.ovt100 || 0),
   });
+
+  // Окно для отпускных: 3 месяца по дате выплаты. Зарплату платят до 10-го
+  // следующего месяца, поэтому для отпуска в месяце W берутся месяцы работы
+  // W-4, W-3, W-2 (выплаченные в W-3…W-1).
+  const urlopWindow = W => [4, 3, 2].map(k => addMonths(W, -k));
 
   // ── возраст и ulga dla młodych ────────────────────────────────────
   // Ulga действует на доход, полученный до дня 26-летия включительно.
@@ -282,7 +299,7 @@
     iso, monthKey, addDays, addMonths, hmMin, daysInMonth,
     SHIFT_CUT_H, shiftDayFrom, shiftToday, shiftYest, shiftBounds, shiftDayOf, minutesBetween, nightMinutes,
     parseSpan, monthPlan, easter, plHolidays, nominalHours,
-    TAX, minWage, salary, urlopAverage, variableOf, youngStatus, PAY_DAY, walletMonth, walletUntil, daysLeft,
+    TAX, minWage, salary, urlopAverage, variableOf, urlopWindow, youngStatus, PAY_DAY, walletMonth, walletUntil, daysLeft,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;

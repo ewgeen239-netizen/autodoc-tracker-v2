@@ -46,7 +46,8 @@ function defaults() {
     v: 2, uid: '', name: '', emoji: '👷', photo: '', team: 'dark', group: 'A', teamAt: 0,
     ws: 'mon', theme: 'auto', consent: null,
     entries: [], archive: {}, notes: [], urlop: {}, ovt: [],
-    profile: { birth: '', birthOk: false, rateMode: '31.40', rate: 31.40, kup: 'local', pit2: true, ppk: false, nightBasis: 'min', extra: 0 },
+    profile: { birth: '', birthOk: false, rateMode: '33.00', rate: 33.00, kup: 'local', pit2: true, ppk: false, nightBasis: 'min', extra: 0,
+      dark: 300, ekw: 22.95, deduct: 0 },
     wallet: { cur: null, draft: null, hist: [] },
     notify: { h2: true, h1: true, peaks: true, pay: true },
   };
@@ -82,15 +83,18 @@ function sanitize(raw) {
   const p = raw.profile || {};
   d.profile = {
     birth: RE_DAY.test(p.birth) ? p.birth : '', birthOk: !!p.birthOk && RE_DAY.test(p.birth),
-    rateMode: ['31.40', '32.00', '33.50', 'own'].includes(p.rateMode) ? p.rateMode : '31.40',
-    rate: fin(p.rate, 0, 500, 31.40), kup: p.kup === 'commute' ? 'commute' : 'local',
+    // старые пресеты 32,00 и 33,50 переносим в «свою ставку», чтобы не потерять число
+    rateMode: ['31.40', '33.00', '35.00', 'own'].includes(p.rateMode) ? p.rateMode : ['32.00', '33.50'].includes(p.rateMode) ? 'own' : '33.00',
+    rate: ['32.00', '33.50'].includes(p.rateMode) ? Number(p.rateMode) : fin(p.rate, 0, 500, 33.00), kup: p.kup === 'commute' ? 'commute' : 'local',
     pit2: p.pit2 !== false, ppk: !!p.ppk, nightBasis: p.nightBasis === 'own' ? 'own' : 'min', extra: fin(p.extra, 0, 1e5),
+    dark: fin(p.dark ?? 300, 0, 5000), ekw: fin(p.ekw ?? 22.95, 0, 1000), deduct: fin(p.deduct, 0, 5000),
   };
   const w = raw.wallet || {};
   const cleanInp = i => i && RE_MK.test(i.month) ? {
     month: i.month, hours: fin(i.hours, 0, 744), nightHours: fin(i.nightHours, 0, 744), urlopHours: fin(i.urlopHours, 0, 744),
     ovt50: fin(i.ovt50, 0, 300), ovt100: fin(i.ovt100, 0, 300), ovtNight: fin(i.ovtNight, 0, 300),
     ...(Number.isFinite(+i.urlopVar) && i.urlopVar !== null && i.urlopVar !== '' ? { urlopVar: fin(i.urlopVar, 0, 200) } : {}),
+    ...(Number.isFinite(+i.ytd) && i.ytd !== null && i.ytd !== '' ? { ytd: fin(i.ytd, 0, 1e6) } : {}),
   } : null;
   d.wallet.cur = w.cur && cleanInp(w.cur.inp) ? { month: w.cur.inp.month, inp: cleanInp(w.cur.inp), savedAt: str(w.cur.savedAt, 40) } : null;
   d.wallet.draft = cleanInp(w.draft);
@@ -765,21 +769,28 @@ function monthVariable(mk) {
   const a = autoHours(mk);
   if (!a.has || !a.hours) return null;
   const inp = { month: mk, hours: a.hours, nightHours: a.night, ovt50: a.o50, ovt100: a.o100, ovtNight: a.oN };
-  const r = C.salary({ ...inp, rate: currentRate(), bonus: bonusFor(mk), nightBasis: DB.profile.nightBasis });
+  const r = C.salary({ ...inp, rate: currentRate(), bonus: bonusFor(mk), dark: darkFor(), nightBasis: DB.profile.nightBasis });
   return { ...C.variableOf(r, inp), src: 'est' };
 }
-// Средняя доплата к часу отпуска: 3 месяца перед месяцем отпуска.
+// Средняя доплата к часу отпуска: 3 месяца по дате выплаты (работа W-4…W-2).
 function urlopAuto(W) {
-  const ms = [1, 2, 3].map(k => C.addMonths(W, -k)).reverse();
+  const ms = C.urlopWindow(W);
   const rows = ms.map(m => ({ m, v: monthVariable(m) })).filter(x => x.v);
   const avg = C.urlopAverage(rows.map(x => x.v));
   return { ...avg, from: rows[0]?.m, to: rows[rows.length - 1]?.m, est: rows.some(x => x.v.src === 'est') };
 }
 
+// Dodatek DARK — только у ночной бригады.
+const darkFor = () => DB.team === 'dark' ? DB.profile.dark : 0;
+// Брутто с начала года до месяца W — для лимита ulga dla młodych. Из прошлых выплат кошелька.
+const ytdAuto = W => r2s(DB.wallet.hist.filter(h => h.month.slice(0, 4) === W.slice(0, 4) && h.month < W).reduce((s, h) => s + h.brutto, 0));
+const r2s = n => Math.round(n * 100) / 100;
+
 function salaryInput(inp) {
   const p = DB.profile, ys = youngFor(inp.month);
   return { ...inp, urlopVar: inp.urlopVar ?? urlopAuto(inp.month).perHour,
-    rate: currentRate(), bonus: bonusFor(inp.month), extra: p.extra,
+    rate: currentRate(), bonus: bonusFor(inp.month), extra: p.extra, dark: darkFor(), ekw: p.ekw, deduct: p.deduct,
+    ytd: inp.ytd ?? ytdAuto(inp.month),
     young: ys.status === 'yes' || ys.status === 'partial', kup: p.kup, pit2: p.pit2, ppk: p.ppk, nightBasis: p.nightBasis };
 }
 
@@ -831,10 +842,10 @@ function renderWalletForm(v) {
     <div class="card wstep"><div class="wstep-h"><i>1</i><b>Возраст</b><small>для налога PIT</small></div>
       <label class="field"><span>Дата рождения</span><input class="in" type="date" id="w-birth" value="${p.birth}" max="${C.iso(new Date())}" data-in="birth"></label>
       <label class="check" style="margin:12px 0 0"><input type="checkbox" id="w-birth-ok" data-act="birth-ok" ${p.birthOk ? 'checked' : ''} ${p.birth ? '' : 'disabled'}><span>Подтверждаю, что дата рождения верна</span></label>
-      ${ageLine}</div>
+      ${ageLine}${ys.status === 'yes' || ys.status === 'partial' ? ytdBlock(v) : ''}</div>
 
     <div class="card wstep"><div class="wstep-h"><i>2</i><b>Ставка в час</b><small>брутто</small></div>
-      <div class="chips">${rateChip('31.40', '31,40 мин.')}${rateChip('32.00', '32,00')}${rateChip('33.50', '33,50')}${rateChip('own', 'Своя')}</div>
+      <div class="chips">${rateChip('33.00', '33,00 AutoDoc')}${rateChip('31.40', '31,40 мин.')}${rateChip('35.00', '35,00')}${rateChip('own', 'Своя')}</div>
       ${p.rateMode === 'own' ? `<label class="field" style="margin-top:10px"><span>Своя ставка, zł/ч</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="500" id="w-rate" value="${p.rate}" data-in="w"></label>` : ''}</div>
 
     <div class="card wstep"><div class="wstep-h"><i>3</i><b>Часы за ${MONTHS[+v.W.slice(5) - 1]}</b></div>
@@ -858,7 +869,14 @@ function renderWalletForm(v) {
       <div class="field" style="margin-top:10px"><span>Ночная доплата 20%</span><div class="chips"><button class="chip${p.nightBasis === 'min' ? ' on' : ''}" data-act="nb" data-v="min">от минималки, ${money(C.salary({ month: v.W, rate: 0 }).minHourly)} zł/ч</button><button class="chip${p.nightBasis === 'own' ? ' on' : ''}" data-act="nb" data-v="own">от моей ставки</button></div></div>
       <label class="switch" style="margin-top:8px"><span><b>PIT-2 подан</b><small>минус 300 zł налога каждый месяц</small></span><span class="tg"><input type="checkbox" data-act="pit2" ${p.pit2 ? 'checked' : ''}><i></i></span></label>
       <label class="switch"><span><b>Участвую в PPK</b><small>2% с меня, 1,5% от работодателя</small></span><span class="tg"><input type="checkbox" data-act="ppk" ${p.ppk ? 'checked' : ''}><i></i></span></label>
-      <label class="field" style="margin-top:6px"><span>Другие доплаты брутто, zł</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-extra" value="${p.extra || ''}" placeholder="0" data-in="w"></label>
+      ${DB.team === 'dark' ? `<label class="field" style="margin-top:6px"><span>Dodatek DARK, zł</span><input class="in" type="number" inputmode="decimal" step="1" min="0" id="w-dark" value="${p.dark}" data-in="w"></label>
+      <p class="hint" style="margin-top:6px">300 zł, если отработаны все смены по графику; отпуск не мешает. При пропусках доплату могут уменьшить.</p>` : ''}
+      <div class="grid2" style="margin-top:10px">
+        <label class="field"><span>Эквивалент за одежду и стирку</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-ekw" value="${p.ekw}" data-in="w"></label>
+        <label class="field"><span>Удержания (benefit и т.п.)</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-ded" value="${p.deduct || ''}" placeholder="0" data-in="w"></label>
+      </div>
+      <p class="hint" style="margin-top:6px">Эквивалент (12,00 + 10,95 zł) идёт без налога прямо в «на руки». Удержания — например, карта Multisport, если она есть в pasku.</p>
+      <label class="field" style="margin-top:10px"><span>Другие доплаты брутто, zł</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-extra" value="${p.extra || ''}" placeholder="0" data-in="w"></label>
     </div>
     <div class="save-row"><button class="btn btn-acc" data-act="w-save">${v.saved ? 'Обновить расчёт' : 'Сохранить расчёт'}</button><button class="btn btn-ghost" data-act="w-reset" aria-label="Сбросить к графику">Сбросить</button></div>`;
 }
@@ -868,7 +886,7 @@ function urlopBlock(W, i) {
   const ua = urlopAuto(W), uv = i.urlopVar ?? ua.perHour;
   const span = ua.months ? (ua.from === ua.to ? MONTHS[+ua.from.slice(5) - 1] : `${MONTHS[+ua.from.slice(5) - 1]}–${MONTHS[+ua.to.slice(5) - 1]}`) : '';
   const note = ua.months
-    ? `Среднее за ${span}: ночные, сверхурочные и премия за пики делятся на отработанные часы — ${money(ua.perHour)} zł/ч${ua.est ? ', оценка по графику и архиву' : ''}.`
+    ? `Среднее за ${span} (3 месяца по дате выплаты): премия, сверхурочные, ночные и Dodatek DARK делятся на отработанные часы — ${money(ua.perHour)} zł/ч${ua.est ? ', оценка по графику и архиву' : ''}.`
     : 'Нет данных за прошлые месяцы. Впиши среднюю доплату из pasku или оставь 0.';
   const differs = ua.months && Math.abs(uv - ua.perHour) > 0.004;
   return `<div class="urlop-box">
@@ -877,17 +895,27 @@ function urlopBlock(W, i) {
   </div>`;
 }
 
+// Лимит ulga dla młodych: сколько дохода с начала года уже набрано.
+function ytdBlock(v) {
+  const ytd = v.inp.ytd ?? ytdAuto(v.W), left = Math.max(0, C.TAX.YOUNG_LIMIT - ytd);
+  return `<label class="field" style="margin-top:12px"><span>Брутто с января до ${MONTHS_GEN[+v.W.slice(5) - 1]}, zł</span>
+    <input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-ytd" value="${ytd}" data-in="w"></label>
+    <p class="hint" style="margin-top:6px">${left > 0 ? `Без PIT осталось ${money(left)} zł из ${int(C.TAX.YOUNG_LIMIT)}.` : 'Лимит ulga исчерпан — PIT удерживается.'} Сумма берётся из прошлых выплат кошелька, впиши точную из последнего pasku.</p>`;
+}
+
 function renderBreakdown(r) {
   const row = (k, v, cls = '', sub = '') => v || cls ? `<tr class="${cls}"><td>${k}${sub ? `<small>${sub}</small>` : ''}</td><td>${cls === 'minus' ? '−' : ''}${money(v)}</td></tr>` : '';
   $('wallet-break').innerHTML = `<h2 class="sec">Из чего складывается</h2><div class="card"><table class="tbl">
     ${row('Основные часы', r.parts.base, '', `${money(r.rate)} zł/ч`)}${row('Отпуск (urlop)', r.parts.urlop, '', r.urlopVar ? `${money(r.rate)} + ${money(r.urlopVar)} средних доплат = ${money(r.urlopRate)} zł/ч` : `${money(r.rate)} zł/ч`)}
     ${row('Ночная доплата', r.parts.night, '', `${money(r.nightRate)} zł за ночной час`)}${row('Сверхурочные +50%', r.parts.ovt50)}${row('Сверхурочные +100%', r.parts.ovt100)}
-    ${row('Премия за пики', r.parts.bonus)}${row('Другие доплаты', r.parts.extra)}
+    ${row('Премия (zadaniowa, за пики)', r.parts.bonus)}${row('Dodatek DARK', r.parts.dark)}${row('Другие доплаты', r.parts.extra)}
     <tr class="tot"><td>Брутто</td><td>${money(r.brutto)}</td></tr>
     ${row('ZUS: пенсионный, рентовый, больничный', r.zus, 'minus', '13,71% от брутто')}
     ${row('Składka zdrowotna', r.health, 'minus', '9% от брутто без ZUS')}
-    ${row('PIT', r.pit, 'minus', r.young ? 'ulga dla młodych' : `12% от ${int(r.pitBase)} zł${DB.profile.pit2 ? ' минус 300' : ''}`)}
+    ${row('PIT', r.pit, 'minus', r.young && !r.pit ? 'ulga dla młodych' : `12% от ${int(r.pitBase)} zł${DB.profile.pit2 ? ' минус 300' : ''}${r.young ? ', сверх лимита ulga' : ''}`)}
     ${r.ppkEmp ? row('PPK', r.ppkEmp, 'minus', '2%') : ''}
+    ${r.ekw ? `<tr><td>Эквивалент: одежда и стирка<small>без налога</small></td><td>+${money(r.ekw)}</td></tr>` : ''}
+    ${r.deduct ? row('Удержания', r.deduct, 'minus', 'benefit и т.п.') : ''}
     <tr class="tot net"><td>На руки</td><td>${money(r.netto)}</td></tr></table></div>
     <p class="hint">Ориентир по ставкам 2026 года. Точная сумма — в pasku płacowym.</p>`;
 }
@@ -897,8 +925,12 @@ function readWalletInputs() {
   const W = C.walletMonth();
   if ($('w-rate')) DB.profile.rate = Math.min(500, n('w-rate'));
   DB.profile.extra = Math.min(1e5, n('w-extra'));
+  if ($('w-dark')) DB.profile.dark = Math.min(5000, n('w-dark'));
+  if ($('w-ekw')) DB.profile.ekw = Math.min(1000, n('w-ekw'));
+  if ($('w-ded')) DB.profile.deduct = Math.min(5000, n('w-ded'));
   const inp = { month: W, hours: n('w-hours'), nightHours: n('w-night'), urlopHours: n('w-urlop'), ovt50: n('w-o50'), ovt100: n('w-o100'), ovtNight: n('w-on') };
   if ($('w-uvar')) inp.urlopVar = Math.min(200, n('w-uvar'));
+  if ($('w-ytd')) inp.ytd = Math.min(1e6, n('w-ytd'));
   DB.wallet.draft = inp;
   return inp;
 }

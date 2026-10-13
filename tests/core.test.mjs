@@ -59,6 +59,35 @@ t('отпуск: ставка + средняя переменная часть �
   assert.equal(v.var, C.r2(s.parts.night + s.parts.ovt50 + 250));
 });
 
+t('статьи AutoDoc: Dodatek DARK облагается, эквиваленты — нет, удержания из «на руки»', () => {
+  const base = { month: '2026-10', rate: 30, hours: 100, young: true };
+  const a = C.salary(base);
+  const b = C.salary({ ...base, dark: 300 });
+  assert.equal(C.r2(b.brutto - a.brutto), 300);
+  assert.ok(b.zus > a.zus && b.health > a.health);           // dark входит в ZUS и здоровье
+  const c = C.salary({ ...base, ekw: 20, deduct: 5 });
+  assert.equal(c.brutto, a.brutto);                          // эквиваленты не в брутто
+  assert.equal(C.r2(c.netto - a.netto), 15);
+  const v = C.variableOf(b, { hours: 100 });
+  assert.equal(v.var, 300);                                  // dark — переменная часть для отпускных
+});
+
+t('ulga dla młodych: сверх лимита 85 528 zł PIT считается', () => {
+  const inp = { month: '2026-11', rate: 50, hours: 160, young: true };
+  assert.equal(C.salary({ ...inp, ytd: 70000 }).pit, 0);              // до лимита
+  const over = C.salary({ ...inp, ytd: 85528 });                      // лимит исчерпан
+  const old = C.salary({ ...inp, young: false });
+  assert.equal(over.pit, old.pit);
+  const part = C.salary({ ...inp, ytd: 82528 });                      // 3000 из 8000 ещё без налога
+  assert.equal(part.taxable, 5000);
+  assert.ok(part.pit > 0 && part.pit < old.pit);
+});
+
+t('окно отпускных: 3 месяца по дате выплаты', () => {
+  assert.deepEqual(C.urlopWindow('2026-08'), ['2026-04', '2026-05', '2026-06']);
+  assert.deepEqual(C.urlopWindow('2026-01'), ['2025-09', '2025-10', '2025-11']);
+});
+
 t('номинальные часы 2026', () => {
   assert.equal(C.nominalHours('2026-01'), 160);   // 1 и 6 января — будни
   assert.equal(C.nominalHours('2026-10'), 176);
