@@ -35,6 +35,13 @@ if not TOKEN:
 WEBAPP_URL = os.environ.get("WEBAPP_URL", "").strip()
 if not WEBAPP_URL.startswith("https://"):
     raise SystemExit("WEBAPP_URL должен быть https-адресом Mini App (GitHub Pages).")
+# Частая ошибка: вписать ссылку на репозиторий, а не на сайт. Тогда кнопка
+# «Открыть трекер» показывает страницу GitHub. Переводим в адрес GitHub Pages.
+_gh = re.match(r"^https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", WEBAPP_URL)
+if _gh:
+    _fixed = f"https://{_gh.group(1).lower()}.github.io/{_gh.group(2)}/"
+    print(f"⚠️ WEBAPP_URL указывает на репозиторий GitHub, а не на приложение. Использую {_fixed} — поправь переменную в Railway.")
+    WEBAPP_URL = _fixed
 if not WEBAPP_URL.endswith("/"):
     WEBAPP_URL += "/"
 
