@@ -470,13 +470,20 @@ def cmd_broadcast(m):
     if not text:
         return send(m.chat.id, "Напиши: <code>/broadcast текст</code>. Можно HTML: &lt;b&gt;, &lt;i&gt;.")
     try:
-        send(m.chat.id, "Предпросмотр:\n\n" + text)
+        send(m.chat.id, "Предпросмотр:")
+        send(m.chat.id, text, broadcast_kb())
     except ApiTelegramException as e:
         return send(m.chat.id, f"⚠️ Текст не принят Telegram: <code>{esc(e.description)}</code>")
     STATE[m.from_user.id] = ("bc", text)
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("📢 Разослать всем", callback_data="bc_go"), InlineKeyboardButton("Отмена", callback_data="menu"))
     send(m.chat.id, "Разослать это всем активным?", kb)
+
+
+def broadcast_kb():
+    kb = InlineKeyboardMarkup()
+    kb.add(app_btn("📱 Открыть трекер"))
+    return kb
 
 
 def run_broadcast(chat_id, text):
@@ -488,7 +495,7 @@ def run_broadcast(chat_id, text):
     ok = bad = 0
     for uid in users:
         try:
-            bot.send_message(int(uid), text, disable_web_page_preview=True)
+            bot.send_message(int(uid), text, disable_web_page_preview=True, reply_markup=broadcast_kb())
             ok += 1
         except ApiTelegramException as e:
             if e.error_code == 429:
