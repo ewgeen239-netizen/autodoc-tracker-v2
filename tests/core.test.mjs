@@ -88,14 +88,13 @@ t('окно отпускных: 3 месяца по дате выплаты', ()
   assert.deepEqual(C.urlopWindow('2026-01'), ['2025-09', '2025-10', '2025-11']);
 });
 
-t('премия за обецность: 0 пропусков ×1,25, каждый снимает 25%, с третьего 0', () => {
-  assert.deepEqual([0, 1, 2, 3, 5].map(C.premiumFactor), [1.25, 1, 0.75, 0, 0]);
+t('премия за обецность: 0 пропусков ×1,25, 1 — ×0,8, с двух 0', () => {
+  assert.deepEqual([0, 1, 2, 3, 5].map(C.premiumFactor), [1.25, 0.8, 0, 0, 0]);
   assert.equal(C.premiumFactor(undefined), 1);
   const base = { month: '2026-10', rate: 30, hours: 100, bonus: 400 };
   assert.equal(C.salary({ ...base, absences: 0 }).parts.bonus, 500);
-  assert.equal(C.salary({ ...base, absences: 1 }).parts.bonus, 400);
-  assert.equal(C.salary({ ...base, absences: 2 }).parts.bonus, 300);
-  assert.equal(C.salary({ ...base, absences: 3 }).parts.bonus, 0);
+  assert.equal(C.salary({ ...base, absences: 1 }).parts.bonus, 320);
+  assert.equal(C.salary({ ...base, absences: 2 }).parts.bonus, 0);
   assert.equal(C.salary({ ...base, absences: 0 }).bonusBase, 400);
 });
 

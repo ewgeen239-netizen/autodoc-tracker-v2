@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261013.1853';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261013.1930';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -700,7 +700,7 @@ function daySheet(d) {
       <button class="btn ${isU ? 'btn-ghost' : 'btn-acc'}" data-act="urlop" data-day="${day}">${isU ? 'Снять отпуск' : 'Отпуск'}</button>
       ${span ? `<button class="btn ${isA ? 'btn-ghost' : 'btn-warn'}" data-act="absent" data-day="${day}">${isA ? 'Снять пропуск' : 'Пропуск'}</button>` : '<span></span>'}
     </div>
-    ${span ? `<p class="hint" style="margin-top:8px">Пропуск — смена не отработана без отпуска (L4, прогул). Каждый снимает 25% премии: в этом месяце сейчас ${absN} → премия ×${fx(C.premiumFactor(absN))}.</p>` : ''}
+    ${span ? `<p class="hint" style="margin-top:8px">Пропуск — смена не отработана без отпуска (L4, прогул). Без пропусков премия ×1,25, с одним ×0,80, с двумя и больше премии нет. Сейчас в месяце ${absN} → ×${fx(C.premiumFactor(absN))}.</p>` : ''}
     <div style="margin-top:16px;font:600 18px var(--f-num)">Сверхурочные</div>
     ${ov.map(o => `<div class="ent"><span class="ent-b"><b>${h1(o.hours)} ч</b>+${o.pct}%${o.night ? ', ночью' : ''}</span><button class="x" data-act="del-ovt" data-id="${o.id}" aria-label="Удалить">×</button></div>`).join('')}
     <div class="grid2" style="margin-top:10px">
@@ -879,7 +879,7 @@ function renderSlip(v, until, left, flash) {
   countUp($('slip-netto'), v.res.netto); STATE.slipV = v.res.netto;
 }
 
-const fx = f => f.toFixed(2).replace('.', ',');           // множитель премии: 1,25 / 1,00 / 0,75
+const fx = f => f.toFixed(2).replace('.', ',');           // множитель премии: 1,25 / 0,80 / 0
 const absText = (f, n) => n ? `${n} ${plural(n, 'пропуск', 'пропуска', 'пропусков')}${f ? '' : ', премии нет'}` : 'без пропусков +25%';
 
 function renderWalletForm(v) {
@@ -935,11 +935,11 @@ function renderWalletForm(v) {
 // Пропуски и множитель премии за обецность.
 function absBlock(v) {
   const auto = autoHours(v.W).absences, n = v.inp.absences ?? auto, f = C.premiumFactor(n);
-  const chip = (k, t) => `<button class="chip${Math.min(n, 3) === k ? ' on' : ''}" data-act="w-abs" data-v="${k}">${t}</button>`;
+  const chip = (k, t) => `<button class="chip${Math.min(n, 2) === k ? ' on' : ''}" data-act="w-abs" data-v="${k}">${t}</button>`;
   return `<div class="urlop-box">
     <div class="field"><span>Пропуски в ${MONTHS_GEN[+v.W.slice(5) - 1].replace(/я$/, 'е').replace(/а$/, 'е')}</span>
-      <div class="chips">${chip(0, '0 · ×1,25')}${chip(1, '1 · ×1,00')}${chip(2, '2 · ×0,75')}${chip(3, '3+ · 0')}</div></div>
-    <p>Премия без пропусков +25%, каждый пропуск снимает 25%, с третьего премии нет. ${auto ? `В календаре отмечено ${auto}.` : 'Отмечай пропуски в календаре — посчитается само.'}${n !== auto ? ` <button class="link" data-act="w-abs-auto">Взять из календаря (${auto})</button>` : ''} Сейчас премия ×${fx(f)}.</p>
+      <div class="chips">${chip(0, '0 · ×1,25')}${chip(1, '1 · ×0,80')}${chip(2, '2+ · 0')}</div></div>
+    <p>Без пропусков премия ×1,25, с одним пропуском ×0,80, с двумя и больше премии нет. ${auto ? `В календаре отмечено ${auto}.` : 'Отмечай пропуски в календаре — посчитается само.'}${n !== auto ? ` <button class="link" data-act="w-abs-auto">Взять из календаря (${auto})</button>` : ''} Сейчас премия ×${fx(f)}.</p>
   </div>`;
 }
 
