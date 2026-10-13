@@ -45,7 +45,7 @@ function defaults() {
   return {
     v: 2, uid: '', name: '', emoji: '👷', photo: '', team: 'dark', group: 'A', teamAt: 0,
     ws: 'mon', theme: 'auto', consent: null,
-    entries: [], archive: {}, notes: [], urlop: {}, ovt: [],
+    entries: [], archive: {}, notes: [], urlop: {}, absent: {}, ovt: [],
     profile: { birth: '', birthOk: false, rateMode: '33.00', rate: 33.00, kup: 'local', pit2: true, ppk: false, nightBasis: 'min', extra: 0,
       dark: 300, ekw: 22.95, deduct: 0 },
     wallet: { cur: null, draft: null, hist: [] },
@@ -74,9 +74,10 @@ function sanitize(raw) {
   for (const [k, v] of Object.entries(raw.archive || {})) if (RE_MK.test(k) && v && typeof v === 'object')
     d.archive[k] = { bonus: fin(v.bonus, 0, 1e6), peaks: fin(v.peaks, 0, 1e7), hours: fin(v.hours, 0, 1e4), shifts: fin(v.shifts, 0, 62), ppc: fin(v.ppc, 0, 1e4) };
   d.notes = (Array.isArray(raw.notes) ? raw.notes : []).slice(-200).map(n => ({ id: fin(n.id, 0, 9e15), text: str(n.text, 500), at: str(n.at || n.date, 40) })).filter(n => n.text);
-  for (const [k, v] of Object.entries(raw.urlop || {})) if (RE_MK.test(k) && v && typeof v === 'object') {
-    const days = {}; Object.keys(v).forEach(x => { const n = +x; if (n >= 1 && n <= 31) days[n] = 1; }); d.urlop[k] = days;
-  }
+  for (const key of ['urlop', 'absent'])
+    for (const [k, v] of Object.entries(raw[key] || {})) if (RE_MK.test(k) && v && typeof v === 'object') {
+      const days = {}; Object.keys(v).forEach(x => { const n = +x; if (n >= 1 && n <= 31) days[n] = 1; }); d[key][k] = days;
+    }
   d.ovt = (Array.isArray(raw.ovt) ? raw.ovt : []).filter(o => o && RE_DAY.test(o.date)).slice(-500).map(o => ({
     id: fin(o.id, 0, 9e15, Date.now()), date: o.date, hours: fin(o.hours, 0, 16), pct: o.pct === 50 ? 50 : 100, night: !!o.night,
   })).filter(o => o.hours > 0);
@@ -95,6 +96,7 @@ function sanitize(raw) {
     ovt50: fin(i.ovt50, 0, 300), ovt100: fin(i.ovt100, 0, 300), ovtNight: fin(i.ovtNight, 0, 300),
     ...(Number.isFinite(+i.urlopVar) && i.urlopVar !== null && i.urlopVar !== '' ? { urlopVar: fin(i.urlopVar, 0, 200) } : {}),
     ...(Number.isFinite(+i.ytd) && i.ytd !== null && i.ytd !== '' ? { ytd: fin(i.ytd, 0, 1e6) } : {}),
+    ...(Number.isFinite(+i.absences) && i.absences !== null && i.absences !== '' ? { absences: Math.round(fin(i.absences, 0, 31)) } : {}),
   } : null;
   d.wallet.cur = w.cur && cleanInp(w.cur.inp) ? { month: w.cur.inp.month, inp: cleanInp(w.cur.inp), savedAt: str(w.cur.savedAt, 40) } : null;
   d.wallet.draft = cleanInp(w.draft);
@@ -188,7 +190,7 @@ function pushProfile() {
   if (!STATE.verified) return;
   clearTimeout(_profT);
   const today = C.iso(new Date());
-  const off = Object.entries(DB.urlop).flatMap(([mk, days]) => Object.keys(days).map(d => `${mk}-${String(d).padStart(2, '0')}`)).filter(d => d >= today).sort().slice(0, 120);
+  const off = [DB.urlop, DB.absent].flatMap(src => Object.entries(src).flatMap(([mk, days]) => Object.keys(days).map(d => `${mk}-${String(d).padStart(2, '0')}`))).filter(d => d >= today).sort().slice(0, 120);
   _profT = setTimeout(() => api('profile', { team: DB.team, group: DB.group, notify: DB.notify, name: DB.name, off }).catch(() => toast('Не удалось сохранить настройки оповещений — проверь связь')), 900);
 }
 
@@ -424,7 +426,7 @@ function nextShift(now = new Date()) {
     const day = C.addDays(C.iso(now), i), mk = day.slice(0, 7), p = plan(mk);
     if (!p) continue;
     const d = +day.slice(8), span = p.days[d];
-    if (!span || DB.urlop[mk]?.[d]) continue;
+    if (!span || DB.urlop[mk]?.[d] || DB.absent[mk]?.[d]) continue;
     const b = C.shiftBounds(day, span.from, span.to);
     if (b.en > now) return { day, span, b, label: p.label };
   }
@@ -454,7 +456,9 @@ function renderHome() {
   $('plate-code').textContent = code;
   $('plate-month').textContent = mLabel(mk);
   barcode($('plate-bar'), code);
-  countUp($('plate-bonus'), C.monthBonus(DB.entries, mk));
+  const base = C.monthBonus(DB.entries, mk), absN = autoHours(mk).absences, pf = C.premiumFactor(absN);
+  countUp($('plate-bonus'), base);
+  $('plate-cap').textContent = base ? `премия за пики в этом месяце · с обецностью ×${fx(pf)} = ${money(base * pf)} zł` : 'премия за пики в этом месяце';
 
   const ns = nextShift(now), box = $('next-shift');
   if (!STATE.sched) box.innerHTML = `<div class="next-ic">📅</div><div><b>График не загрузился</b><small>Проверь интернет и открой приложение снова.</small></div>`;
@@ -635,27 +639,43 @@ function renderCal() {
   const first = new Date(y, m, 1).getDay(), off = DB.ws === 'mon' ? (first + 6) % 7 : first;
   for (let i = 0; i < off; i++) h += '<div class="cd e"></div>';
   const ovtDays = {}; DB.ovt.filter(o => o.date.slice(0, 7) === mk).forEach(o => { ovtDays[+o.date.slice(8)] = (ovtDays[+o.date.slice(8)] || 0) + o.hours; });
-  let work = 0, hol = 0, url = 0;
+  let work = 0, hol = 0, url = 0, abs = 0;
   for (let d = 1; d <= dim; d++) {
-    const day = `${mk}-${String(d).padStart(2, '0')}`, span = p.days[d], isU = DB.urlop[mk]?.[d], isH = p.holidays[String(d)];
+    const day = `${mk}-${String(d).padStart(2, '0')}`, span = p.days[d], isU = DB.urlop[mk]?.[d], isA = DB.absent[mk]?.[d], isH = p.holidays[String(d)];
     let cls = 'cd', sub = '';
-    if (isU) { cls += ' u'; sub = 'отпуск'; url++; }
+    if (isA) { cls += ' a'; sub = 'пропуск'; abs++; }
+    else if (isU) { cls += ' u'; sub = 'отпуск'; url++; }
     else if (isH) { cls += ' h'; sub = 'święto'; hol++; }
     else if (span) { cls += ' w'; sub = `${span.from.slice(0, 2)}–${span.to.slice(0, 2)}`; work++; }
     if (day === today) cls += ' t'; else if (day < today) cls += ' past';
     h += `<button class="${cls}" data-act="day" data-d="${d}" aria-label="${d} ${MONTHS_GEN[m]}${sub ? ', ' + sub : ''}">${d}${sub ? `<small>${sub}</small>` : ''}${ovtDays[d] ? '<span class="dot"></span>' : ''}</button>`;
   }
   $('cal-grid').innerHTML = h;
-  $('cal-legend').innerHTML = `<span><i style="background:var(--acc)"></i>смена ${work}</span><span><i style="background:var(--bad)"></i>праздник ${hol}</span><span><i style="background:#B07CF2"></i>отпуск ${url}</span><span><i style="background:var(--kraft)"></i>сверхурочные</span>`;
+  $('cal-legend').innerHTML = `<span><i style="background:var(--acc)"></i>смена ${work}</span><span><i style="background:var(--bad)"></i>праздник ${hol}</span><span><i style="background:#B07CF2"></i>отпуск ${url}</span>${abs ? `<span><i style="background:repeating-linear-gradient(-45deg,var(--warn) 0 2px,transparent 2px 4px);box-shadow:inset 0 0 0 1px var(--warn)"></i>пропуск ${abs}</span>` : ''}<span><i style="background:var(--kraft)"></i>сверхурочные</span>`;
+}
+
+// Отпуск и пропуск в один день не бывают — отметка одного снимает другое.
+function markDay(kind, other, day) {
+  const mk = day.slice(0, 7), d = +day.slice(8);
+  DB[kind][mk] = DB[kind][mk] || {};
+  if (DB[kind][mk][d]) delete DB[kind][mk][d];
+  else { DB[kind][mk][d] = 1; if (DB[other][mk]) delete DB[other][mk][d]; }
+  save(); haptic.ok(); closeSheet(); renderCal(); pushProfile();
+  if (kind === 'absent') { const n = Object.keys(DB.absent[mk] || {}).length; toast(`Пропусков в месяце: ${n}, премия ×${fx(C.premiumFactor(n))}`); }
 }
 
 function daySheet(d) {
   const mk = `${STATE.calY}-${String(STATE.calM + 1).padStart(2, '0')}`, day = `${mk}-${String(d).padStart(2, '0')}`;
-  const p = plan(mk), span = p && p.days[d], hol = p && p.holidays[String(d)], isU = DB.urlop[mk]?.[d];
+  const p = plan(mk), span = p && p.days[d], hol = p && p.holidays[String(d)], isU = DB.urlop[mk]?.[d], isA = DB.absent[mk]?.[d];
   const ov = DB.ovt.filter(o => o.date === day);
+  const absN = Object.keys(DB.absent[mk] || {}).length;
   sheet(`<h3>${esc(dayName(day))}</h3>
-    <p>${hol ? `Праздник: ${esc(hol)}` : span ? `Смена ${p.label} ${span.from}–${span.to}` : 'Выходной по графику'}${isU ? '. Отмечен отпуск.' : ''}</p>
-    <button class="btn ${isU ? 'btn-ghost' : 'btn-acc'} btn-wide" data-act="urlop" data-day="${day}">${isU ? 'Снять отпуск' : 'Отметить отпуск'}</button>
+    <p>${hol ? `Праздник: ${esc(hol)}` : span ? `Смена ${p.label} ${span.from}–${span.to}` : 'Выходной по графику'}${isU ? '. Отмечен отпуск.' : ''}${isA ? '. Отмечен пропуск.' : ''}</p>
+    <div class="grid2">
+      <button class="btn ${isU ? 'btn-ghost' : 'btn-acc'}" data-act="urlop" data-day="${day}">${isU ? 'Снять отпуск' : 'Отпуск'}</button>
+      ${span ? `<button class="btn ${isA ? 'btn-ghost' : 'btn-warn'}" data-act="absent" data-day="${day}">${isA ? 'Снять пропуск' : 'Пропуск'}</button>` : '<span></span>'}
+    </div>
+    ${span ? `<p class="hint" style="margin-top:8px">Пропуск — смена не отработана без отпуска (L4, прогул). Каждый снимает 25% премии: в этом месяце сейчас ${absN} → премия ×${fx(C.premiumFactor(absN))}.</p>` : ''}
     <div style="margin-top:16px;font:600 18px var(--f-num)">Сверхурочные</div>
     ${ov.map(o => `<div class="ent"><span class="ent-b"><b>${h1(o.hours)} ч</b>+${o.pct}%${o.night ? ', ночью' : ''}</span><button class="x" data-act="del-ovt" data-id="${o.id}" aria-label="Удалить">×</button></div>`).join('')}
     <div class="grid2" style="margin-top:10px">
@@ -744,15 +764,17 @@ function bonusFor(mk) {
 function autoHours(mk) {
   const p = plan(mk); let hours = 0, night = 0, shifts = 0, urlop = 0;
   const marked = Object.keys(DB.urlop[mk] || {});
+  const absences = Object.keys(DB.absent[mk] || {}).length;
   if (p) for (const [d, span] of Object.entries(p.days)) {
     if (!span) continue;
     const len = C.minutesBetween(span.from, span.to) / 60;
+    if (DB.absent[mk]?.[d]) continue;                     // пропуск — смена не оплачивается
     if (DB.urlop[mk]?.[d]) { urlop += len; continue; }   // отпуск в день смены — столько часов, сколько длится смена
     shifts++; hours += len; night += C.nightMinutes(span.from, span.to) / 60;
   }
   else urlop = marked.length * 8;                         // графика нет — считаем по 8 ч
   const ov = DB.ovt.filter(o => o.date.slice(0, 7) === mk);
-  return { shifts, hours, night, urlop, has: !!p,
+  return { shifts, hours, night, urlop, absences, has: !!p,
     o50: ov.filter(o => o.pct === 50).reduce((s, o) => s + o.hours, 0),
     o100: ov.filter(o => o.pct === 100).reduce((s, o) => s + o.hours, 0),
     oN: ov.filter(o => o.night).reduce((s, o) => s + o.hours, 0) };
@@ -768,7 +790,7 @@ function monthVariable(mk) {
   if (h) return { var: h.var, hours: h.hours, src: 'calc' };
   const a = autoHours(mk);
   if (!a.has || !a.hours) return null;
-  const inp = { month: mk, hours: a.hours, nightHours: a.night, ovt50: a.o50, ovt100: a.o100, ovtNight: a.oN };
+  const inp = { month: mk, hours: a.hours, nightHours: a.night, ovt50: a.o50, ovt100: a.o100, ovtNight: a.oN, absences: a.absences };
   const r = C.salary({ ...inp, rate: currentRate(), bonus: bonusFor(mk), dark: darkFor(), nightBasis: DB.profile.nightBasis });
   return { ...C.variableOf(r, inp), src: 'est' };
 }
@@ -791,13 +813,14 @@ function salaryInput(inp) {
   return { ...inp, urlopVar: inp.urlopVar ?? urlopAuto(inp.month).perHour,
     rate: currentRate(), bonus: bonusFor(inp.month), extra: p.extra, dark: darkFor(), ekw: p.ekw, deduct: p.deduct,
     ytd: inp.ytd ?? ytdAuto(inp.month),
+    absences: inp.absences ?? autoHours(inp.month).absences,
     young: ys.status === 'yes' || ys.status === 'partial', kup: p.kup, pit2: p.pit2, ppk: p.ppk, nightBasis: p.nightBasis };
 }
 
 function autoInp(W) {
   const a = autoHours(W), r1 = x => Math.round(x * 10) / 10;
   return { month: W, hours: r1(a.hours), nightHours: r1(a.night), urlopHours: r1(a.urlop), ovt50: r1(a.o50), ovt100: r1(a.o100), ovtNight: r1(a.oN),
-    urlopVar: urlopAuto(W).perHour };
+    urlopVar: urlopAuto(W).perHour, absences: a.absences };
 }
 // Что показываем: несохранённые правки → сохранённый расчёт → часы из графика.
 function walletView(now = new Date()) {
@@ -827,9 +850,12 @@ function renderSlip(v, until, left, flash) {
     <div class="slip-top"><span>Wypłata за ${MONTHS[+v.W.slice(5) - 1]} ${v.W.slice(0, 4)}</span><span class="slip-due">до ${ud}.${um}, ${left} ${plural(left, 'день', 'дня', 'дней')}</span></div>
     <div class="slip-num"><span class="num" id="slip-netto" data-v="${STATE.slipV || 0}">0</span><small>zł</small></div>
     <div class="slip-sub">${v.dirty ? 'есть несохранённые правки, нажми «Обновить расчёт»' : v.saved ? `на руки, расчёт сохранён ${esc(fmtD((DB.wallet.cur.savedAt || '').slice(0, 10)))}` : 'черновик: проверь часы и нажми «Сохранить расчёт»'}</div>
-    <div class="slip-bonus${flash ? ' fresh' : ''}"><span>Премия за пики, брутто<br><small style="opacity:.75">${v.W === C.monthKey(new Date()) ? 'считается по записям прямо сейчас' : 'итог месяца из архива'}</small></span><b>${money(v.res.parts.bonus)} zł</b></div>`;
+    <div class="slip-bonus${flash ? ' fresh' : ''}"><span>Премия за пики, брутто<br><small style="opacity:.75">${money(v.res.bonusBase)} × ${fx(v.res.premiumFactor)} — ${absText(v.res.premiumFactor, salaryInput(v.inp).absences)}</small></span><b>${money(v.res.parts.bonus)} zł</b></div>`;
   countUp($('slip-netto'), v.res.netto); STATE.slipV = v.res.netto;
 }
+
+const fx = f => f.toFixed(2).replace('.', ',');           // множитель премии: 1,25 / 1,00 / 0,75
+const absText = (f, n) => n ? `${n} ${plural(n, 'пропуск', 'пропуска', 'пропусков')}${f ? '' : ', премии нет'}` : 'без пропусков +25%';
 
 function renderWalletForm(v) {
   const p = DB.profile, ys = youngFor(v.W), a = autoHours(v.W), i = v.inp;
@@ -855,7 +881,7 @@ function renderWalletForm(v) {
         <label class="field"><span>Из них ночью</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-night" value="${i.nightHours}" data-in="w"></label>
         <label class="field"><span>Отпуск, ч</span><input class="in" type="number" inputmode="decimal" step="1" min="0" id="w-urlop" value="${i.urlopHours}" data-in="w"></label>
       </div>
-      ${urlopBlock(v.W, i)}</div>
+      ${urlopBlock(v.W, i)}${absBlock(v)}</div>
 
     <div class="card wstep"><div class="wstep-h"><i>4</i><b>Сверхурочные</b><small>из календаря: ${h1(a.o50 + a.o100)} ч</small></div>
       <div class="grid3">
@@ -879,6 +905,17 @@ function renderWalletForm(v) {
       <label class="field" style="margin-top:10px"><span>Другие доплаты брутто, zł</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-extra" value="${p.extra || ''}" placeholder="0" data-in="w"></label>
     </div>
     <div class="save-row"><button class="btn btn-acc" data-act="w-save">${v.saved ? 'Обновить расчёт' : 'Сохранить расчёт'}</button><button class="btn btn-ghost" data-act="w-reset" aria-label="Сбросить к графику">Сбросить</button></div>`;
+}
+
+// Пропуски и множитель премии за обецность.
+function absBlock(v) {
+  const auto = autoHours(v.W).absences, n = v.inp.absences ?? auto, f = C.premiumFactor(n);
+  const chip = (k, t) => `<button class="chip${Math.min(n, 3) === k ? ' on' : ''}" data-act="w-abs" data-v="${k}">${t}</button>`;
+  return `<div class="urlop-box">
+    <div class="field"><span>Пропуски в ${MONTHS_GEN[+v.W.slice(5) - 1].replace(/я$/, 'е').replace(/а$/, 'е')}</span>
+      <div class="chips">${chip(0, '0 · ×1,25')}${chip(1, '1 · ×1,00')}${chip(2, '2 · ×0,75')}${chip(3, '3+ · 0')}</div></div>
+    <p>Премия без пропусков +25%, каждый пропуск снимает 25%, с третьего премии нет. ${auto ? `В календаре отмечено ${auto}.` : 'Отмечай пропуски в календаре — посчитается само.'}${n !== auto ? ` <button class="link" data-act="w-abs-auto">Взять из календаря (${auto})</button>` : ''} Сейчас премия ×${fx(f)}.</p>
+  </div>`;
 }
 
 // Отпускные: ставка + средняя доплата за час. Показываем, откуда взялось число.
@@ -908,7 +945,7 @@ function renderBreakdown(r) {
   $('wallet-break').innerHTML = `<h2 class="sec">Из чего складывается</h2><div class="card"><table class="tbl">
     ${row('Основные часы', r.parts.base, '', `${money(r.rate)} zł/ч`)}${row('Отпуск (urlop)', r.parts.urlop, '', r.urlopVar ? `${money(r.rate)} + ${money(r.urlopVar)} средних доплат = ${money(r.urlopRate)} zł/ч` : `${money(r.rate)} zł/ч`)}
     ${row('Ночная доплата', r.parts.night, '', `${money(r.nightRate)} zł за ночной час`)}${row('Сверхурочные +50%', r.parts.ovt50)}${row('Сверхурочные +100%', r.parts.ovt100)}
-    ${row('Премия (zadaniowa, за пики)', r.parts.bonus)}${row('Dodatek DARK', r.parts.dark)}${row('Другие доплаты', r.parts.extra)}
+    ${r.bonusBase ? row('Премия (zadaniowa, за пики)', r.parts.bonus, '', `${money(r.bonusBase)} × ${fx(r.premiumFactor)} за обецность`) : ''}${row('Dodatek DARK', r.parts.dark)}${row('Другие доплаты', r.parts.extra)}
     <tr class="tot"><td>Брутто</td><td>${money(r.brutto)}</td></tr>
     ${row('ZUS: пенсионный, рентовый, больничный', r.zus, 'minus', '13,71% от брутто')}
     ${row('Składka zdrowotna', r.health, 'minus', '9% от брутто без ZUS')}
@@ -1077,8 +1114,8 @@ const ACT = {
   'cal-move': el => { STATE.calM += +el.dataset.v; if (STATE.calM < 0) { STATE.calM = 11; STATE.calY--; } if (STATE.calM > 11) { STATE.calM = 0; STATE.calY++; } haptic.pick(); renderCal(); },
   'cal-now': () => { const n = new Date(); STATE.calY = n.getFullYear(); STATE.calM = n.getMonth(); renderCal(); },
   'day': el => daySheet(+el.dataset.d),
-  'urlop': el => { const day = el.dataset.day, mk = day.slice(0, 7), d = +day.slice(8); DB.urlop[mk] = DB.urlop[mk] || {};
-    if (DB.urlop[mk][d]) delete DB.urlop[mk][d]; else DB.urlop[mk][d] = 1; save(); haptic.ok(); closeSheet(); renderCal(); pushProfile(); },
+  'urlop': el => markDay('urlop', 'absent', el.dataset.day),
+  'absent': el => markDay('absent', 'urlop', el.dataset.day),
   'ov-pct': el => { STATE.ovPct = +el.dataset.v; document.querySelectorAll('#ov-pct .chip').forEach(c => c.classList.toggle('on', c === el)); },
   'add-ovt': el => { const h = Number(String($('ov-h').value).replace(',', '.'));
     if (!(h > 0 && h <= 16)) { $('ov-h').focus(); haptic.err(); return; }
@@ -1105,6 +1142,8 @@ const ACT = {
   'w-auto': () => { const W = C.walletMonth(), cur = walletView().inp, a = autoInp(W);
     DB.wallet.draft = { ...cur, hours: a.hours, nightHours: a.nightHours, urlopHours: a.urlopHours, ovt50: a.ovt50, ovt100: a.ovt100, ovtNight: a.ovtNight, urlopVar: a.urlopVar };
     save(); renderWallet(false); toast('Часы и сверхурочные взяты из графика'); },
+  'w-abs': el => { const v = walletView(); DB.wallet.draft = { ...v.inp, absences: +el.dataset.v }; save(); haptic.pick(); renderWallet(false); },
+  'w-abs-auto': () => { const v = walletView(); DB.wallet.draft = { ...v.inp, absences: autoHours(v.W).absences }; save(); renderWallet(false); },
   'w-uvar-auto': () => { const v = walletView(); DB.wallet.draft = { ...v.inp, urlopVar: urlopAuto(v.W).perHour }; save(); renderWallet(false); },
   'w-reset': () => confirmSheet('Сбросить расчёт?', 'Часы снова возьмутся из графика, сохранённый расчёт за этот месяц удалится.', 'Сбросить', () => { DB.wallet.cur = null; DB.wallet.draft = null; save(); renderWallet(false); }),
   'w-save': () => { const inp = readWalletInputs(); DB.wallet.cur = { month: inp.month, inp, savedAt: new Date().toISOString() }; DB.wallet.draft = null; save(); haptic.ok();

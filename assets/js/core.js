@@ -188,6 +188,7 @@
    *    month:'YYYY-MM', rate, hours (всего отработано по графику, без сверхурочных),
    *    nightHours (из них в 22–6), urlopHours, ovt50, ovt100, ovtNight (сверхурочные в 22–6),
    *    urlopVar (средняя переменная часть за час отпуска, zł/ч — см. urlopAverage),
+   *    absences (пропуски за месяц: премия ×1,25 / ×1 / ×0,75 / 0 — см. premiumFactor),
    *    dark (Dodatek DARK, брутто), ekw (эквиваленты за одежду/стирку — без налога),
    *    deduct (удержания из «на руки»: benefit и т.п.), ytd (брутто с начала года до месяца — для лимита ulga),
    *    bonus (премия за пики, брутто), extra (прочие доплаты брутто),
@@ -215,7 +216,7 @@
       night: r2((nightH + oNight) * nightRate),
       ovt50: r2(o50 * rate * 1.5),
       ovt100: r2(o100 * rate * 2),
-      bonus: r2(Math.max(0, +inp.bonus || 0)),
+      bonus: r2(Math.max(0, +inp.bonus || 0) * premiumFactor(inp.absences)),
       dark: r2(Math.max(0, +inp.dark || 0)),
       extra: r2(Math.max(0, +inp.extra || 0)),
     };
@@ -241,8 +242,19 @@
 
     return { month: mk, rate, nominal: nom, minHourly: r2(minHourly), nightRate: r2(nightRate),
              urlopVar: r2(urlopVar), urlopRate: r2(urlopRate),
+             bonusBase: r2(Math.max(0, +inp.bonus || 0)), premiumFactor: premiumFactor(inp.absences),
              parts, brutto, zus, zusParts, health, ppkEmp, ppkEr, kup, pitBase, pit, ekw, deduct, netto,
              young: !!inp.young, taxable: r2(taxable), exemptLeft: r2(exemptLeft) };
+  }
+
+  // ── премия за обецность ───────────────────────────────────────────
+  // Без пропусков премия ×1,25. Каждый пропуск снимает 25%: 1 → ×1,00,
+  // 2 → ×0,75, с третьего премии нет. absences не задан — множитель 1 (чистая премия).
+  const ATTENDANCE = [1.25, 1.00, 0.75];
+  function premiumFactor(absences) {
+    if (absences === undefined || absences === null || absences === '') return 1;
+    const n = Math.max(0, Math.floor(+absences || 0));
+    return n < ATTENDANCE.length ? ATTENDANCE[n] : 0;
   }
 
   // ── отпускные: средняя переменная часть за час ────────────────────
@@ -299,7 +311,7 @@
     iso, monthKey, addDays, addMonths, hmMin, daysInMonth,
     SHIFT_CUT_H, shiftDayFrom, shiftToday, shiftYest, shiftBounds, shiftDayOf, minutesBetween, nightMinutes,
     parseSpan, monthPlan, easter, plHolidays, nominalHours,
-    TAX, minWage, salary, urlopAverage, variableOf, urlopWindow, youngStatus, PAY_DAY, walletMonth, walletUntil, daysLeft,
+    TAX, minWage, salary, ATTENDANCE, premiumFactor, urlopAverage, variableOf, urlopWindow, youngStatus, PAY_DAY, walletMonth, walletUntil, daysLeft,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
