@@ -48,7 +48,7 @@ function defaults() {
     entries: [], archive: {}, notes: [], urlop: {}, ovt: [],
     profile: { birth: '', birthOk: false, rateMode: '31.40', rate: 31.40, kup: 'local', pit2: true, ppk: false, nightBasis: 'min', extra: 0 },
     wallet: { cur: null, draft: null, hist: [] },
-    notify: { h12: true, h1: true, peaks: true, pay: true },
+    notify: { h2: true, h1: true, peaks: true, pay: true },
   };
 }
 
@@ -98,7 +98,7 @@ function sanitize(raw) {
   }));
   if (Number.isFinite(+w.lastBonus)) d.wallet.lastBonus = fin(w.lastBonus, 0, 1e6);
   const nt = raw.notify || {};
-  d.notify = { h12: nt.h12 !== false, h1: nt.h1 !== false, peaks: nt.peaks !== false, pay: nt.pay !== false };
+  d.notify = { h2: (nt.h2 ?? nt.h12) !== false, h1: nt.h1 !== false, peaks: nt.peaks !== false, pay: nt.pay !== false };
   return d;
 }
 
@@ -174,7 +174,7 @@ function pushRank() {
   clearTimeout(_rankT);
   _rankT = setTimeout(() => {
     const m = C.monthKey(new Date()), s = C.monthSnapshot(DB.entries, m);
-    api('rank', { row: { month: m, name: DB.name || 'Аноним', emoji: DB.emoji, bonus: s.bonus, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
+    api('rank', { row: { month: m, name: DB.name || 'Аноним', emoji: DB.emoji, team: DB.team, group: DB.group, bonus: s.bonus, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
   }, 1500);
 }
 let _profT = null;
@@ -669,8 +669,8 @@ function renderNotify() {
     return;
   }
   const row = (k, t, s) => `<label class="switch"><span><b>${t}</b><small>${s}</small></span><span class="tg"><input type="checkbox" data-act="notify" data-k="${k}" ${DB.notify[k] ? 'checked' : ''}><i></i></span></label>`;
-  card.innerHTML = row('h12', 'За 12 часов до смены', 'чтобы спланировать день') +
-    row('h1', 'За час до смены', 'время выходить к автобусу') +
+  card.innerHTML = row('h2', 'За 2 часа до смены', 'чтобы спокойно собраться') +
+    row('h1', 'За час до смены', 'пора выходить к автобусу') +
     row('peaks', 'После смены', 'напомнить записать пики') +
     row('pay', '10-го числа', 'кошелёк обновился, пора посчитать новый месяц') +
     `<button class="btn btn-ghost btn-wide" style="margin-top:6px" data-act="ics">Добавить смены в календарь телефона</button>`;
@@ -872,17 +872,27 @@ async function renderRating() {
   $('rank-month').textContent = mLabel(m);
   const wrap = $('rank-list'); wrap.innerHTML = '<div class="empty">Загружаю…</div>';
   try {
-    const r = await fetch(`${CFG.SB_URL}/rest/v1/leaderboard?month=eq.${m}&order=bonus.desc&limit=100&select=pub,name,emoji,bonus,peaks,shifts,ppc`,
+    const q = cols => fetch(`${CFG.SB_URL}/rest/v1/leaderboard?month=eq.${m}&order=bonus.desc&limit=100&select=${cols}`,
       { headers: { apikey: CFG.SB_KEY, Authorization: 'Bearer ' + CFG.SB_KEY } });
+    let r = await q('pub,name,emoji,bonus,peaks,shifts,ppc,team,grp');
+    if (r.status === 400 || r.status === 401) r = await q('pub,name,emoji,bonus,peaks,shifts,ppc');   // база ещё без колонок смены
     if (!r.ok) throw 0;
     const rows = await r.json();
     if (!rows.length) { wrap.innerHTML = '<div class="empty"><b>Пока никого</b>Запиши смену — и окажешься в таблице.</div>'; return; }
     const medal = ['🥇', '🥈', '🥉'];
     wrap.innerHTML = rows.map((x, i) => { const me = !!STATE.pub && x.pub === STATE.pub; return `
       <div class="strow${me ? ' me-row' : ''}"><span class="rk">${i < 3 ? medal[i] : i + 1}</span>
-        <span class="strow-b"><b>${esc(x.emoji || '👷')} ${esc(x.name || 'Аноним')}${me ? ' (ты)' : ''}</b><small>${int(x.peaks)} шт, ${int(x.shifts)} ${plural(+x.shifts || 0, 'смена', 'смены', 'смен')}, темп ${h1(x.ppc)}</small></span>
+        <span class="strow-b"><span class="rk-name"><b>${esc(x.emoji || '👷')} ${esc(x.name || 'Аноним')}${me ? ' (ты)' : ''}</b>${teamTag(x.team, x.grp)}</span><small>${int(x.peaks)} шт, ${int(x.shifts)} ${plural(+x.shifts || 0, 'смена', 'смены', 'смен')}, темп ${h1(x.ppc)}</small></span>
         <span class="strow-r">${money(x.bonus)}<small>zł</small></span></div>`; }).join('');
   } catch { wrap.innerHTML = '<div class="empty"><b>Нет связи с базой</b>Проверь интернет и открой раздел снова.</div>'; }
+}
+
+// Маленький бейдж смены в рейтинге: точка цвета смены + «DARK A». Не переносится,
+// имя рядом обрезается многоточием — строка не разъезжается на узком экране.
+function teamTag(team, grp) {
+  if (!TEAM_COL[team]) return '';
+  const label = teamMeta(team).label + (/^[A-F]$/.test(grp || '') ? ' ' + grp : '');
+  return `<span class="tm-tag" style="--tc:${TEAM_COL[team]}" title="Смена ${esc(label)}">${esc(label)}</span>`;
 }
 
 function renderArchive() {
@@ -977,7 +987,7 @@ const ACT = {
   'ob-done': () => {
     if (!STATE.obTeam || !STATE.obGroup) return;
     DB.team = STATE.obTeam; DB.group = STATE.obGroup; DB.teamAt = Date.now(); save(); applyTheme(); haptic.ok();
-    $('consent').hidden = true; renderAll(); pushProfile();
+    $('consent').hidden = true; renderAll(); pushProfile(); pushRank();
     toast(`Смена ${teamMeta(DB.team).label} ${DB.group}: график и оповещения настроены`);
   },
   'station': el => { STATE.curSt = el.dataset.st; haptic.pick(); if (STATE.tab !== 'peaks') go('peaks'); else renderPeaks(); },
@@ -986,8 +996,8 @@ const ACT = {
   'del-entry': el => confirmSheet('Удалить запись?', 'Премия за месяц пересчитается.', 'Удалить', () => {
     DB.entries = DB.entries.filter(e => e.id !== +el.dataset.id); save(); renderPeaks(); pushRank(); toast('Запись удалена'); }),
   'team-sheet': () => { go('sched'); STATE.schedTab = 'cal'; renderSched(); document.getElementById('team-pick').scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'center' }); },
-  'team': el => { DB.team = el.dataset.v; const g = teamMeta(DB.team).groups; if (!g.includes(DB.group)) DB.group = g[0]; DB.teamAt = Date.now(); save(); applyTheme(); haptic.ok(); renderHeader(); renderSched(); pushProfile(); },
-  'group': el => { DB.group = el.dataset.v; DB.teamAt = Date.now(); save(); haptic.pick(); renderHeader(); renderSched(); pushProfile(); },
+  'team': el => { DB.team = el.dataset.v; const g = teamMeta(DB.team).groups; if (!g.includes(DB.group)) DB.group = g[0]; DB.teamAt = Date.now(); save(); applyTheme(); haptic.ok(); renderHeader(); renderSched(); pushProfile(); pushRank(); },
+  'group': el => { DB.group = el.dataset.v; DB.teamAt = Date.now(); save(); haptic.pick(); renderHeader(); renderSched(); pushProfile(); pushRank(); },
   'sched-tab': el => { STATE.schedTab = el.dataset.v; renderSched(); },
   'cal-move': el => { STATE.calM += +el.dataset.v; if (STATE.calM < 0) { STATE.calM = 11; STATE.calY--; } if (STATE.calM > 11) { STATE.calM = 0; STATE.calY++; } haptic.pick(); renderCal(); },
   'cal-now': () => { const n = new Date(); STATE.calY = n.getFullYear(); STATE.calM = n.getMonth(); renderCal(); },

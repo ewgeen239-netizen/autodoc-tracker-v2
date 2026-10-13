@@ -137,15 +137,17 @@ def gen_shifts(sched, uid, team, group, month, off=()):
 
 
 # ── оповещения ───────────────────────────────────────────────
-H12, H1 = 12 * 3600, 3600
+H2, H1 = 2 * 3600, 3600
 PEAKS_AFTER = (15 * 60, 3 * 3600)        # «запиши пики»: от 15 минут до 3 часов после конца
 PAY_HOURS = (10, 21)                     # 10-го числа — с 10:00 до 21:59
 
-DEFAULT_NOTIFY = {"h12": True, "h1": True, "peaks": True, "pay": True}
+DEFAULT_NOTIFY = {"h2": True, "h1": True, "peaks": True, "pay": True}
 
 
 def prefs(user):
-    n = user.get("notify") or {}
+    n = dict(user.get("notify") or {})
+    if "h2" not in n and "h12" in n:                # старая настройка «за 12 часов» → «за 2 часа»
+        n["h2"] = n["h12"]
     return {k: n.get(k, v) is not False for k, v in DEFAULT_NOTIFY.items()}
 
 
@@ -171,9 +173,9 @@ def plan(rows, users, at=None):
         if 0 < left <= H1:
             if p["h1"]:
                 out.append((uid, f"{day}:h1", "h1", r))
-        elif H1 < left <= H12:
-            if p["h12"]:
-                out.append((uid, f"{day}:h12", "h12", r))
+        elif H1 < left <= H2:
+            if p["h2"]:
+                out.append((uid, f"{day}:h2", "h2", r))
         after = (at - end).total_seconds()
         if PEAKS_AFTER[0] <= after <= PEAKS_AFTER[1] and p["peaks"]:
             out.append((uid, f"{day}:peaks", "peaks", r))

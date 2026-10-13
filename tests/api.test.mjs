@@ -55,10 +55,11 @@ await t('rank: неправдоподобная премия — 422', async () 
 });
 await t('rank: пишет доверенный uid, а не присланный', async () => {
   calls.length = 0;
-  const r = await post({ initData: initData({ ...me, id: 779 }), action: 'rank', row: { uid: '1', month: new Date().toISOString().slice(0, 7), peaks: 1000, hours: 16, shifts: 2, bonus: 100, name: '<b>x</b>' } });
+  const r = await post({ initData: initData({ ...me, id: 779 }), action: 'rank', row: { uid: '1', month: new Date().toISOString().slice(0, 7), peaks: 1000, hours: 16, shifts: 2, bonus: 100, name: '<b>x</b>', team: 'dark', group: 'B' } });
   assert.equal(r.status, 200);
   const w = calls.find(c => c.url.includes('/leaderboard'));
   assert.equal(w.body.uid, '779'); assert.equal(w.body.name, 'bx/b');
+  assert.equal(w.body.team, 'dark'); assert.equal(w.body.grp, 'B');
 });
 await t('profile: плохая смена — 400, хорошая — rebuild', async () => {
   assert.equal((await post({ initData: initData({ ...me, id: 780 }), action: 'profile', team: 'red', group: 'A' })).status, 400);

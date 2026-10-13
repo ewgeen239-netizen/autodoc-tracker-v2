@@ -135,7 +135,7 @@ function icsEvent(s: IcsShift, now: Date): string[] {
     if (!isNaN(+t)) out.push(`LAST-MODIFIED:${icsStamp(t)}`);
   }
   // те же два напоминания, что шлёт бот, — на случай если человек отключит бота
-  for (const [trig, text] of [["-PT12H", "Смена через 12 часов"], ["-PT1H", "Смена через час"]]) {
+  for (const [trig, text] of [["-PT2H", "Смена через 2 часа"], ["-PT1H", "Смена через час"]]) {
     out.push("BEGIN:VALARM", "ACTION:DISPLAY", `TRIGGER:${trig}`,
              `DESCRIPTION:${icsEsc(text)}`, "END:VALARM");
   }
@@ -318,6 +318,8 @@ Deno.serve(async (req) => {
           name: clean(r.name, 40) || clean(user.first_name, 40) || "Аноним",
           emoji: clean(r.emoji, 8) || "👷",
           photo_url: user.photo_url && /^https:\/\//.test(user.photo_url) ? user.photo_url.slice(0, 300) : null,
+          team: TEAMS.includes(String(r.team)) ? String(r.team) : null,
+          grp: /^[A-F]$/.test(String(r.group ?? "")) ? String(r.group) : null,
           bonus: Math.round(bonus * 100) / 100, peaks, hours: Math.round(hours * 10) / 10, shifts,
           ppc: Math.round(ppc * 10) / 10, updated_at: new Date().toISOString(),
         };
@@ -340,7 +342,7 @@ Deno.serve(async (req) => {
         const grp = String(body.group ?? "");
         if (!TEAMS.includes(team) || !/^[A-F]$/.test(grp)) return json({ error: "bad team" }, 400);
         const n = (body.notify ?? {}) as Record<string, unknown>;
-        const notify = { h12: n.h12 !== false, h1: n.h1 !== false, peaks: n.peaks !== false, pay: n.pay !== false };
+        const notify = { h2: (n.h2 ?? n.h12) !== false, h1: n.h1 !== false, peaks: n.peaks !== false, pay: n.pay !== false };
         const now = new Date().toISOString();
         // дни отпуска (YYYY-MM-DD) — бот не будет напоминать о смене в эти дни
         const off = (Array.isArray(body.off) ? body.off : []).map(String).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).slice(0, 120);

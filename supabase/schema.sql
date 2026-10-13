@@ -30,6 +30,9 @@ create table if not exists public.leaderboard (
 );
 -- pub — непрозрачный id для подсветки «это ты» (HMAC от uid на сервере).
 alter table public.leaderboard add column if not exists pub text;
+-- смена и группа — для бейджа «DARK A» в рейтинге
+alter table public.leaderboard add column if not exists team text;
+alter table public.leaderboard add column if not exists grp  text;
 create index if not exists leaderboard_month_bonus_idx on public.leaderboard (month, bonus desc);
 
 alter table public.leaderboard enable row level security;
@@ -40,7 +43,7 @@ create policy "leaderboard read" on public.leaderboard for select using (true);
 
 -- Telegram ID наружу не отдаём: анону — только безопасные колонки.
 revoke select on public.leaderboard from anon, authenticated;
-grant select (pub, month, name, emoji, photo_url, bonus, peaks, hours, shifts, ppc, updated_at)
+grant select (pub, month, name, emoji, photo_url, bonus, peaks, hours, shifts, ppc, team, grp, updated_at)
   on public.leaderboard to anon, authenticated;
 
 
@@ -110,6 +113,12 @@ create table if not exists public.ics_tokens (
   created_at timestamptz default now()
 );
 alter table public.ics_tokens enable row level security;
+
+
+-- 6b. Смена в рейтинге для тех, кто уже выбрал её в боте или приложении
+update public.leaderboard l set team = b.team, grp = b.grp
+from public.bot_users b
+where b.uid = l.uid and l.team is null and b.team is not null;
 
 
 -- 7. СИД: всех из рейтинга — в реестр бота ───────────────────────────

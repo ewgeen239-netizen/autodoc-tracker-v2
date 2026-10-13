@@ -45,8 +45,15 @@ class Plan(unittest.TestCase):
     def kinds(self, when, users=(USER,)):
         return [(k, kind) for _, k, kind, _ in SH.plan([ROW], list(users), when)]
 
-    def test_12h(self):
-        self.assertEqual(self.kinds(at(2026, 10, 14, 11)), [("2026-10-14:h12", "h12")])
+    def test_2h(self):
+        self.assertEqual(self.kinds(at(2026, 10, 14, 20, 30)), [("2026-10-14:h2", "h2")])
+
+    def test_no_12h_anymore(self):
+        self.assertEqual(self.kinds(at(2026, 10, 14, 11)), [])
+
+    def test_old_h12_pref_maps_to_h2(self):
+        u = dict(USER, notify={"h12": False})
+        self.assertEqual(self.kinds(at(2026, 10, 14, 20, 30), [u]), [])
 
     def test_1h(self):
         self.assertEqual(self.kinds(at(2026, 10, 14, 21, 10)), [("2026-10-14:h1", "h1")])
@@ -59,8 +66,8 @@ class Plan(unittest.TestCase):
         self.assertEqual(self.kinds(at(2026, 10, 15, 6, 5)), [])
 
     def test_prefs_off(self):
-        u = dict(USER, notify={"h12": False})
-        self.assertEqual(self.kinds(at(2026, 10, 14, 11), [u]), [])
+        u = dict(USER, notify={"h2": False})
+        self.assertEqual(self.kinds(at(2026, 10, 14, 20, 30), [u]), [])
 
     def test_inactive(self):
         self.assertEqual(self.kinds(at(2026, 10, 14, 11), [dict(USER, active=False)]), [])

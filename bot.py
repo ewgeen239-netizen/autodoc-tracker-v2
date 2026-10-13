@@ -2,7 +2,7 @@
 AutoDoc Tracker Bot v2
 ======================
 Telegram-бот к Mini App: открывает трекер, показывает смены, шлёт оповещения
-(за 12 ч и за час до смены, «запиши пики» после смены, 10-го — новый месяц
+(за 2 часа и за час до смены, «запиши пики» после смены, 10-го — новый месяц
 в кошельке), рейтинг премий, быстрый расчёт премии.
 
 Хранилище — только Supabase (Railway стирает файлы при редеплое).
@@ -226,7 +226,7 @@ def team_kb(cur_team=None, cur_grp=None):
     return kb
 
 
-NT_LABEL = {"h12": "За 12 часов до смены", "h1": "За час до смены",
+NT_LABEL = {"h2": "За 2 часа до смены", "h1": "За час до смены",
             "peaks": "После смены: записать пики", "pay": "10-го: новый месяц в кошельке"}
 
 
@@ -284,7 +284,7 @@ def rating_text():
     try:
         r = requests.get(f"{SUPABASE_URL}/rest/v1/leaderboard",
                          params={"month": f"eq.{month}", "order": "bonus.desc", "limit": "15",
-                                 "select": "name,emoji,bonus,peaks,shifts"},
+                                 "select": "name,emoji,bonus,peaks,shifts,team,grp"},
                          headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, timeout=10)
         r.raise_for_status()
         rows = r.json()
@@ -298,7 +298,8 @@ def rating_text():
     for i, x in enumerate(rows):
         b = float(x.get("bonus") or 0)
         fill = round(b / top * 8)
-        lines.append(f"{medal[i] if i < 3 else f'{i + 1}.'} {esc(x.get('emoji') or '👷')} <b>{esc(x.get('name') or 'Аноним')}</b> — <b>{b:.2f} zł</b>\n"
+        tag = f" <i>{esc((x.get('team') or '').upper())} {esc(x.get('grp') or '')}</i>".rstrip() if x.get("team") else ""
+        lines.append(f"{medal[i] if i < 3 else f'{i + 1}.'} {esc(x.get('emoji') or '👷')} <b>{esc(x.get('name') or 'Аноним')}</b>{tag} — <b>{b:.2f} zł</b>\n"
                      f"<code>{'█' * fill}{'░' * (8 - fill)}</code> {int(x.get('peaks') or 0)} шт, {int(x.get('shifts') or 0)} смен")
     return f"🏆 <b>Рейтинг премий, {month}</b>\n\n" + "\n".join(lines)
 
@@ -551,7 +552,7 @@ def cmd_shift_who(m):
 
 
 # ── админ: оповещения ────────────────────────────────────────
-KIND_RU = {"h12": "за 12 ч", "h1": "за час", "peaks": "записать пики", "pay": "10-е, кошелёк"}
+KIND_RU = {"h2": "за 2 ч", "h1": "за час", "peaks": "записать пики", "pay": "10-е, кошелёк"}
 ADMIN_HELP = (
     "🛠 <b>Админ-команды</b>\n\n"
     "<b>Оповещения</b>\n"
@@ -661,7 +662,7 @@ def cmd_nplan(m):
         pr = SH.prefs(u)
         start, end = SH.bounds(r)
         day = str(r["day"])[:10]
-        for kind, at in (("h12", start - timedelta(hours=12)), ("h1", start - timedelta(hours=1)),
+        for kind, at in (("h2", start - timedelta(hours=2)), ("h1", start - timedelta(hours=1)),
                          ("peaks", end + timedelta(minutes=15))):
             if pr[kind] and now - timedelta(minutes=5) <= at <= now + timedelta(hours=hours) \
                     and (str(r["uid"]), f"{day}:{kind}") not in sent:
@@ -707,7 +708,7 @@ def cmd_nuser(m):
     if not u:
         return send(m.chat.id, "Такого пользователя в базе нет — он ещё не нажимал /start и не открывал трекер.")
     pr = SH.prefs(u)
-    flags = ", ".join(f"{'✅' if pr[k] else '▫️'} {KIND_RU[k]}" for k in ("h12", "h1", "peaks", "pay"))
+    flags = ", ".join(f"{'✅' if pr[k] else '▫️'} {KIND_RU[k]}" for k in ("h2", "h1", "peaks", "pay"))
     today = SH.today()
     rows = my_rows(uid, today, today + timedelta(days=14))[:5]
     try:
@@ -734,10 +735,10 @@ def cmd_ntest(m):
     row = {"uid": str(m.from_user.id), "day": soon.date().isoformat(), "starts": soon.strftime("%H:%M:00"),
            "ends": (soon + timedelta(hours=8)).strftime("%H:%M:00"), "kind": "DARK"}
     send(m.chat.id, "🧪 Тест: ниже четыре оповещения в том виде, в каком их получат люди.")
-    for kind in ("h12", "h1", "peaks", "pay"):
+    for kind in ("h2", "h1", "peaks", "pay"):
         r = dict(row)
-        if kind == "h12":
-            later = now + timedelta(hours=12)
+        if kind == "h2":
+            later = now + timedelta(hours=2)
             r.update(day=later.date().isoformat(), starts=later.strftime("%H:%M:00"), ends=(later + timedelta(hours=8)).strftime("%H:%M:00"))
         send(m.chat.id, notify_text(kind, r), notify_kb_for(kind), effect="party" if kind == "pay" else None)
         time.sleep(0.3)
@@ -999,8 +1000,8 @@ def notify_text(kind, row):
         return (f"📦 <b>Смена закончилась</b>\n\n{SH.line(row)}\n\n"
                 "Запиши пики, пока помнишь цифры — премия за месяц пересчитается сразу.")
     left = SH.left_text((start - now).total_seconds())
-    head = "⏰ <b>Смена через 12 часов</b>" if kind == "h12" else "🚌 <b>Скоро смена</b>"
-    tail = "" if kind == "h12" else "\n\nНе забудь жилет, обувь BHP и бейдж."
+    head = "⏰ <b>Смена через 2 часа</b>" if kind == "h2" else "🚌 <b>Через час смена</b>"
+    tail = "\n\nПора собираться: жилет, обувь BHP и бейдж." if kind == "h2" else "\n\nВремя выходить к автобусу."
     return f"{head}\n\n{SH.line(row)}\n\nНачало {left}.{tail}"
 
 

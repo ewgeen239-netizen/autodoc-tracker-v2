@@ -116,7 +116,7 @@ export function icsEvent(s: IcsShift, now: Date): string[] {
     if (!isNaN(+t)) out.push(`LAST-MODIFIED:${icsStamp(t)}`);
   }
   // те же два напоминания, что шлёт бот, — на случай если человек отключит бота
-  for (const [trig, text] of [["-PT12H", "Смена через 12 часов"], ["-PT1H", "Смена через час"]]) {
+  for (const [trig, text] of [["-PT2H", "Смена через 2 часа"], ["-PT1H", "Смена через час"]]) {
     out.push("BEGIN:VALARM", "ACTION:DISPLAY", `TRIGGER:${trig}`,
              `DESCRIPTION:${icsEsc(text)}`, "END:VALARM");
   }
