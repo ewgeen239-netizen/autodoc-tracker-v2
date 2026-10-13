@@ -44,6 +44,21 @@ t('сверхурочные 50% и 100%', () => {
   assert.equal(s.parts.ovt100, 180);
 });
 
+t('отпуск: ставка + средняя переменная часть за 3 месяца', () => {
+  const avg = C.urlopAverage([{ var: 1200, hours: 168 }, { var: 900, hours: 160 }, { var: 1000, hours: 176 }, { var: 50, hours: 0 }]);
+  assert.equal(avg.months, 3);
+  assert.equal(avg.perHour, C.r2(3100 / 504));
+  const plain = C.salary({ month: '2026-10', rate: 31.4, hours: 0, urlopHours: 16 });
+  const urlop = C.salary({ month: '2026-10', rate: 31.4, hours: 0, urlopHours: 16, urlopVar: avg.perHour });
+  assert.equal(plain.parts.urlop, C.r2(16 * 31.4));
+  assert.equal(urlop.parts.urlop, C.r2(16 * (31.4 + avg.perHour)));
+  assert.ok(urlop.parts.urlop > plain.parts.urlop);
+  const s = C.salary({ month: '2026-09', rate: 31.4, hours: 160, nightHours: 160, ovt50: 4, bonus: 250 });
+  const v = C.variableOf(s, { hours: 160, ovt50: 4 });
+  assert.equal(v.hours, 164);
+  assert.equal(v.var, C.r2(s.parts.night + s.parts.ovt50 + 250));
+});
+
 t('номинальные часы 2026', () => {
   assert.equal(C.nominalHours('2026-01'), 160);   // 1 и 6 января — будни
   assert.equal(C.nominalHours('2026-10'), 176);

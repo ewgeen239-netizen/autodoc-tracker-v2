@@ -90,11 +90,13 @@ function sanitize(raw) {
   const cleanInp = i => i && RE_MK.test(i.month) ? {
     month: i.month, hours: fin(i.hours, 0, 744), nightHours: fin(i.nightHours, 0, 744), urlopHours: fin(i.urlopHours, 0, 744),
     ovt50: fin(i.ovt50, 0, 300), ovt100: fin(i.ovt100, 0, 300), ovtNight: fin(i.ovtNight, 0, 300),
+    ...(Number.isFinite(+i.urlopVar) && i.urlopVar !== null && i.urlopVar !== '' ? { urlopVar: fin(i.urlopVar, 0, 200) } : {}),
   } : null;
   d.wallet.cur = w.cur && cleanInp(w.cur.inp) ? { month: w.cur.inp.month, inp: cleanInp(w.cur.inp), savedAt: str(w.cur.savedAt, 40) } : null;
   d.wallet.draft = cleanInp(w.draft);
   d.wallet.hist = (Array.isArray(w.hist) ? w.hist : []).filter(h => h && RE_MK.test(h.month)).slice(-36).map(h => ({
     month: h.month, netto: fin(h.netto, 0, 1e6), brutto: fin(h.brutto, 0, 1e6), bonus: fin(h.bonus, 0, 1e6), savedAt: str(h.savedAt, 40),
+    ...(Number.isFinite(+h.var) && +h.hours > 0 ? { var: fin(h.var, 0, 1e5), hours: fin(h.hours, 0, 744) } : {}),
   }));
   if (Number.isFinite(+w.lastBonus)) d.wallet.lastBonus = fin(w.lastBonus, 0, 1e6);
   const nt = raw.notify || {};
@@ -719,7 +721,8 @@ function walletRollover(now = new Date()) {
   const W = C.walletMonth(now), cur = DB.wallet.cur;
   if (cur && cur.month < W) {
     const r = C.salary(salaryInput(cur.inp));
-    DB.wallet.hist.unshift({ month: cur.month, netto: r.netto, brutto: r.brutto, bonus: r.parts.bonus, savedAt: cur.savedAt });
+    const v = C.variableOf(r, cur.inp);              // пригодится для отпускных следующих месяцев
+    DB.wallet.hist.unshift({ month: cur.month, netto: r.netto, brutto: r.brutto, bonus: r.parts.bonus, savedAt: cur.savedAt, var: v.var, hours: v.hours });
     DB.wallet.hist = DB.wallet.hist.slice(0, 36);
     DB.wallet.cur = null; DB.wallet.draft = null;
     toastLater(`Кошелёк обновлён: ${MONTHS[+cur.month.slice(5) - 1]} ушёл в историю, считаем ${MONTHS[+W.slice(5) - 1]}`);
@@ -735,14 +738,17 @@ function bonusFor(mk) {
 }
 
 function autoHours(mk) {
-  const p = plan(mk); let hours = 0, night = 0, shifts = 0;
-  const urlopDays = Object.keys(DB.urlop[mk] || {}).length;
+  const p = plan(mk); let hours = 0, night = 0, shifts = 0, urlop = 0;
+  const marked = Object.keys(DB.urlop[mk] || {});
   if (p) for (const [d, span] of Object.entries(p.days)) {
-    if (DB.urlop[mk]?.[d] || !span) continue;
-    shifts++; hours += C.minutesBetween(span.from, span.to) / 60; night += C.nightMinutes(span.from, span.to) / 60;
+    if (!span) continue;
+    const len = C.minutesBetween(span.from, span.to) / 60;
+    if (DB.urlop[mk]?.[d]) { urlop += len; continue; }   // отпуск в день смены — столько часов, сколько длится смена
+    shifts++; hours += len; night += C.nightMinutes(span.from, span.to) / 60;
   }
+  else urlop = marked.length * 8;                         // графика нет — считаем по 8 ч
   const ov = DB.ovt.filter(o => o.date.slice(0, 7) === mk);
-  return { shifts, hours, night, urlop: urlopDays * 8, has: !!p,
+  return { shifts, hours, night, urlop, has: !!p,
     o50: ov.filter(o => o.pct === 50).reduce((s, o) => s + o.hours, 0),
     o100: ov.filter(o => o.pct === 100).reduce((s, o) => s + o.hours, 0),
     oN: ov.filter(o => o.night).reduce((s, o) => s + o.hours, 0) };
@@ -751,15 +757,36 @@ function autoHours(mk) {
 function currentRate() { const p = DB.profile; return p.rateMode === 'own' ? p.rate : Number(p.rateMode); }
 function youngFor(mk) { const p = DB.profile; if (!p.birthOk) return { status: 'unknown' }; return C.youngStatus(p.birth, mk); }
 
+// Переменная часть за прошедший месяц: из сохранённого расчёта, а если его нет —
+// оценка по графику, ночным часам, сверхурочным из календаря и премии из архива.
+function monthVariable(mk) {
+  const h = DB.wallet.hist.find(x => x.month === mk && x.hours > 0);
+  if (h) return { var: h.var, hours: h.hours, src: 'calc' };
+  const a = autoHours(mk);
+  if (!a.has || !a.hours) return null;
+  const inp = { month: mk, hours: a.hours, nightHours: a.night, ovt50: a.o50, ovt100: a.o100, ovtNight: a.oN };
+  const r = C.salary({ ...inp, rate: currentRate(), bonus: bonusFor(mk), nightBasis: DB.profile.nightBasis });
+  return { ...C.variableOf(r, inp), src: 'est' };
+}
+// Средняя доплата к часу отпуска: 3 месяца перед месяцем отпуска.
+function urlopAuto(W) {
+  const ms = [1, 2, 3].map(k => C.addMonths(W, -k)).reverse();
+  const rows = ms.map(m => ({ m, v: monthVariable(m) })).filter(x => x.v);
+  const avg = C.urlopAverage(rows.map(x => x.v));
+  return { ...avg, from: rows[0]?.m, to: rows[rows.length - 1]?.m, est: rows.some(x => x.v.src === 'est') };
+}
+
 function salaryInput(inp) {
   const p = DB.profile, ys = youngFor(inp.month);
-  return { ...inp, rate: currentRate(), bonus: bonusFor(inp.month), extra: p.extra,
+  return { ...inp, urlopVar: inp.urlopVar ?? urlopAuto(inp.month).perHour,
+    rate: currentRate(), bonus: bonusFor(inp.month), extra: p.extra,
     young: ys.status === 'yes' || ys.status === 'partial', kup: p.kup, pit2: p.pit2, ppk: p.ppk, nightBasis: p.nightBasis };
 }
 
 function autoInp(W) {
   const a = autoHours(W), r1 = x => Math.round(x * 10) / 10;
-  return { month: W, hours: r1(a.hours), nightHours: r1(a.night), urlopHours: a.urlop, ovt50: r1(a.o50), ovt100: r1(a.o100), ovtNight: r1(a.oN) };
+  return { month: W, hours: r1(a.hours), nightHours: r1(a.night), urlopHours: r1(a.urlop), ovt50: r1(a.o50), ovt100: r1(a.o100), ovtNight: r1(a.oN),
+    urlopVar: urlopAuto(W).perHour };
 }
 // Что показываем: несохранённые правки → сохранённый расчёт → часы из графика.
 function walletView(now = new Date()) {
@@ -816,7 +843,8 @@ function renderWalletForm(v) {
         <label class="field"><span>Отработано</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-hours" value="${i.hours}" data-in="w"></label>
         <label class="field"><span>Из них ночью</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-night" value="${i.nightHours}" data-in="w"></label>
         <label class="field"><span>Отпуск, ч</span><input class="in" type="number" inputmode="decimal" step="1" min="0" id="w-urlop" value="${i.urlopHours}" data-in="w"></label>
-      </div></div>
+      </div>
+      ${urlopBlock(v.W, i)}</div>
 
     <div class="card wstep"><div class="wstep-h"><i>4</i><b>Сверхурочные</b><small>из календаря: ${h1(a.o50 + a.o100)} ч</small></div>
       <div class="grid3">
@@ -835,10 +863,24 @@ function renderWalletForm(v) {
     <div class="save-row"><button class="btn btn-acc" data-act="w-save">${v.saved ? 'Обновить расчёт' : 'Сохранить расчёт'}</button><button class="btn btn-ghost" data-act="w-reset" aria-label="Сбросить к графику">Сбросить</button></div>`;
 }
 
+// Отпускные: ставка + средняя доплата за час. Показываем, откуда взялось число.
+function urlopBlock(W, i) {
+  const ua = urlopAuto(W), uv = i.urlopVar ?? ua.perHour;
+  const span = ua.months ? (ua.from === ua.to ? MONTHS[+ua.from.slice(5) - 1] : `${MONTHS[+ua.from.slice(5) - 1]}–${MONTHS[+ua.to.slice(5) - 1]}`) : '';
+  const note = ua.months
+    ? `Среднее за ${span}: ночные, сверхурочные и премия за пики делятся на отработанные часы — ${money(ua.perHour)} zł/ч${ua.est ? ', оценка по графику и архиву' : ''}.`
+    : 'Нет данных за прошлые месяцы. Впиши среднюю доплату из pasku или оставь 0.';
+  const differs = ua.months && Math.abs(uv - ua.perHour) > 0.004;
+  return `<div class="urlop-box">
+    <label class="field"><span>Доплата к часу отпуска, zł/ч</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="200" id="w-uvar" value="${uv}" data-in="w"></label>
+    <p>${note} Час отпуска = ставка + доплата.${differs ? ` <button class="link" data-act="w-uvar-auto">Вернуть ${money(ua.perHour)}</button>` : ''}</p>
+  </div>`;
+}
+
 function renderBreakdown(r) {
   const row = (k, v, cls = '', sub = '') => v || cls ? `<tr class="${cls}"><td>${k}${sub ? `<small>${sub}</small>` : ''}</td><td>${cls === 'minus' ? '−' : ''}${money(v)}</td></tr>` : '';
   $('wallet-break').innerHTML = `<h2 class="sec">Из чего складывается</h2><div class="card"><table class="tbl">
-    ${row('Основные часы', r.parts.base, '', `${money(r.rate)} zł/ч`)}${row('Отпуск', r.parts.urlop)}
+    ${row('Основные часы', r.parts.base, '', `${money(r.rate)} zł/ч`)}${row('Отпуск (urlop)', r.parts.urlop, '', r.urlopVar ? `${money(r.rate)} + ${money(r.urlopVar)} средних доплат = ${money(r.urlopRate)} zł/ч` : `${money(r.rate)} zł/ч`)}
     ${row('Ночная доплата', r.parts.night, '', `${money(r.nightRate)} zł за ночной час`)}${row('Сверхурочные +50%', r.parts.ovt50)}${row('Сверхурочные +100%', r.parts.ovt100)}
     ${row('Премия за пики', r.parts.bonus)}${row('Другие доплаты', r.parts.extra)}
     <tr class="tot"><td>Брутто</td><td>${money(r.brutto)}</td></tr>
@@ -856,6 +898,7 @@ function readWalletInputs() {
   if ($('w-rate')) DB.profile.rate = Math.min(500, n('w-rate'));
   DB.profile.extra = Math.min(1e5, n('w-extra'));
   const inp = { month: W, hours: n('w-hours'), nightHours: n('w-night'), urlopHours: n('w-urlop'), ovt50: n('w-o50'), ovt100: n('w-o100'), ovtNight: n('w-on') };
+  if ($('w-uvar')) inp.urlopVar = Math.min(200, n('w-uvar'));
   DB.wallet.draft = inp;
   return inp;
 }
@@ -1028,8 +1071,9 @@ const ACT = {
   'ppk': el => { DB.profile.ppk = el.checked; save(); renderWallet(false); },
   'birth-ok': el => { DB.profile.birthOk = el.checked && RE_DAY.test(DB.profile.birth); save(); haptic.ok(); renderWallet(false); },
   'w-auto': () => { const W = C.walletMonth(), cur = walletView().inp, a = autoInp(W);
-    DB.wallet.draft = { ...cur, hours: a.hours, nightHours: a.nightHours, urlopHours: a.urlopHours, ovt50: a.ovt50, ovt100: a.ovt100, ovtNight: a.ovtNight };
+    DB.wallet.draft = { ...cur, hours: a.hours, nightHours: a.nightHours, urlopHours: a.urlopHours, ovt50: a.ovt50, ovt100: a.ovt100, ovtNight: a.ovtNight, urlopVar: a.urlopVar };
     save(); renderWallet(false); toast('Часы и сверхурочные взяты из графика'); },
+  'w-uvar-auto': () => { const v = walletView(); DB.wallet.draft = { ...v.inp, urlopVar: urlopAuto(v.W).perHour }; save(); renderWallet(false); },
   'w-reset': () => confirmSheet('Сбросить расчёт?', 'Часы снова возьмутся из графика, сохранённый расчёт за этот месяц удалится.', 'Сбросить', () => { DB.wallet.cur = null; DB.wallet.draft = null; save(); renderWallet(false); }),
   'w-save': () => { const inp = readWalletInputs(); DB.wallet.cur = { month: inp.month, inp, savedAt: new Date().toISOString() }; DB.wallet.draft = null; save(); haptic.ok();
     const u = C.walletUntil(inp.month); toast(`Сохранено. Расчёт виден до ${u.slice(8)}.${u.slice(5, 7)}`); renderWallet(false); },

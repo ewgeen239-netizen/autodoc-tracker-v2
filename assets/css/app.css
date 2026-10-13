@@ -320,6 +320,8 @@ input,textarea,select{font:inherit;color:var(--text)}
 .age-ok.y{box-shadow:inset 3px 0 0 var(--ok)}
 .age-ok.n{box-shadow:inset 3px 0 0 var(--dim)}
 .age-ok.p{box-shadow:inset 3px 0 0 var(--warn)}
+.urlop-box{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.urlop-box p{color:var(--sub);font-size:12.5px;margin-top:6px;line-height:1.4}
 .auto{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;padding:10px 12px;border-radius:var(--r-in);background:var(--acc-soft);font-size:13.5px}
 .tbl{width:100%;border-collapse:collapse;font-size:14px}
 .tbl td{padding:8px 0;border-top:1px solid var(--line)}

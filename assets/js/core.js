@@ -187,6 +187,7 @@
   /*  in: {
    *    month:'YYYY-MM', rate, hours (всего отработано по графику, без сверхурочных),
    *    nightHours (из них в 22–6), urlopHours, ovt50, ovt100, ovtNight (сверхурочные в 22–6),
+   *    urlopVar (средняя переменная часть за час отпуска, zł/ч — см. urlopAverage),
    *    bonus (премия за пики, брутто), extra (прочие доплаты брутто),
    *    young:true|false, kup:'local'|'commute', pit2:true|false, ppk:true|false,
    *    nightBasis:'min'|'own'
@@ -201,10 +202,14 @@
     const nom = nominalHours(mk);
     const minHourly = nom ? minWage(y) / nom : 0;
     const nightRate = TAX.NIGHT * (inp.nightBasis === 'own' ? rate : minHourly);
+    // Отпускные = ставка + средняя переменная часть (ночные, сверхурочные, премии)
+    // за 3 предыдущих месяца в пересчёте на час. Поэтому час отпуска обычно дороже.
+    const urlopVar = Math.max(0, +inp.urlopVar || 0);
+    const urlopRate = rate + urlopVar;
 
     const parts = {
       base: r2(hours * rate),
-      urlop: r2(urlopH * rate),
+      urlop: r2(urlopH * urlopRate),
       night: r2((nightH + oNight) * nightRate),
       ovt50: r2(o50 * rate * 1.5),
       ovt100: r2(o100 * rate * 2),
@@ -224,9 +229,25 @@
     const netto = r2(brutto - zus - health - pit - ppkEmp);
 
     return { month: mk, rate, nominal: nom, minHourly: r2(minHourly), nightRate: r2(nightRate),
+             urlopVar: r2(urlopVar), urlopRate: r2(urlopRate),
              parts, brutto, zus, zusParts, health, ppkEmp, ppkEr, kup, pitBase, pit, netto,
              young: !!inp.young };
   }
+
+  // ── отпускные: средняя переменная часть за час ────────────────────
+  // Kodeks pracy, rozporządzenie o urlopach (§ 9): składniki zmienne за 3 месяца
+  // перед отпуском делятся на часы, реально отработанные в этих месяцах.
+  // months: [{ var: сумма переменных выплат zł, hours: отработанные часы }]
+  function urlopAverage(months) {
+    const ok = (months || []).filter(m => m && m.hours > 0);
+    const V = ok.reduce((s, m) => s + (+m.var || 0), 0), H = ok.reduce((s, m) => s + m.hours, 0);
+    return { perHour: H > 0 ? r2(V / H) : 0, months: ok.length, var: r2(V), hours: H };
+  }
+  // Переменная часть одного месяца из результата salary().
+  const variableOf = (res, inp) => ({
+    var: r2(res.parts.night + res.parts.ovt50 + res.parts.ovt100 + res.parts.bonus + res.parts.extra),
+    hours: (+inp.hours || 0) + (+inp.ovt50 || 0) + (+inp.ovt100 || 0),
+  });
 
   // ── возраст и ulga dla młodych ────────────────────────────────────
   // Ulga действует на доход, полученный до дня 26-летия включительно.
@@ -261,7 +282,7 @@
     iso, monthKey, addDays, addMonths, hmMin, daysInMonth,
     SHIFT_CUT_H, shiftDayFrom, shiftToday, shiftYest, shiftBounds, shiftDayOf, minutesBetween, nightMinutes,
     parseSpan, monthPlan, easter, plHolidays, nominalHours,
-    TAX, minWage, salary, youngStatus, PAY_DAY, walletMonth, walletUntil, daysLeft,
+    TAX, minWage, salary, urlopAverage, variableOf, youngStatus, PAY_DAY, walletMonth, walletUntil, daysLeft,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core;
   else root.Core = Core;
