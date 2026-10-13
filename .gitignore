@@ -10,3 +10,4 @@ node_modules/
 .claude/
 supabase/.temp/
 supabase/.branches/
+promo/
