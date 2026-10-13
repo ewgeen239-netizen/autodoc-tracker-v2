@@ -108,6 +108,18 @@ input,textarea,select{font:inherit;color:var(--text)}
   background:linear-gradient(var(--card),var(--card)) padding-box,
              repeating-linear-gradient(-45deg,var(--warn) 0 8px,transparent 8px 16px) border-box;border:3px solid transparent}
 
+/* подтверждение аккаунта */
+.offline .vf-h,.vf-card .vf-h{display:flex;align-items:center;gap:10px}
+.offline p,.vf-card p{color:var(--sub);font-size:13.5px;margin-top:6px}
+.vf-ic{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--warn);color:#16191C;font:800 16px/1 var(--f-num)}
+.vf-ic.ok{background:var(--ok);color:#fff}
+.vf-act{display:flex;gap:8px;margin-top:10px}
+.vf-act .btn{min-height:40px;padding:0 14px;font-size:14px}
+.vf-act:empty{display:none}
+.vf-badge{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px;background:var(--dim)}
+.vf-badge.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(60,196,124,.18)}
+.vf-badge.no{background:var(--warn)}
+.vf-card.ok{box-shadow:var(--shadow), inset 3px 0 0 var(--ok)}
 .page{display:none}
 .page.on{display:block;animation:pagein .28s ease-out}
 .page.sub.on{animation:subin .3s cubic-bezier(.2,.8,.2,1)}

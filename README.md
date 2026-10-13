@@ -57,6 +57,8 @@ supabase secrets set BOT_TOKEN=... PROJECT_URL=https://mkuwkntdcpfsxhqblkic.supa
 
 Через браузер: Edge Functions → создать `api` → вставить `index.ts` и `ics.ts` → выключить Verify JWT → Secrets.
 
+**Подтверждение аккаунтов.** Mini App подписан токеном бота, из которого его открыли. Функция принимает подпись по `BOT_TOKEN` и, через запятую, по `BOT_TOKENS` — так работают и старый, и новый бот. Если в боте `/check` (или лог Railway при запуске) пишет «НЕ принимает подпись», добавь в Supabase → Edge Functions → Secrets `BOT_TOKENS` = токен бота из Railway `TOKEN`. В приложении статус виден в шапке (зелёная точка) и в «Ещё → Профиль».
+
 ### 3. Mini App
 
 GitHub → Settings → Pages → Deploy from branch `main`, папка `/`. Адрес вида `https://<user>.github.io/<repo>/`. Ключи Supabase — в `assets/js/config.js`.

@@ -14,7 +14,7 @@
 // GET ?ics=<token> — лента смен для календаря телефона.
 //
 // Deploy:  supabase functions deploy api --no-verify-jwt
-// Secrets: BOT_TOKEN, PROJECT_URL, SERVICE_ROLE_KEY, [PUB_SALT], [ALLOWED_ORIGINS]
+// Secrets: BOT_TOKEN, PROJECT_URL, SERVICE_ROLE_KEY, [BOT_TOKENS], [PUB_SALT], [ALLOWED_ORIGINS]
 
 // ── ics.ts встроен сюда: редактор Supabase в браузере принимает один файл ──
 // Календарная лента смен (iCalendar, RFC 5545). Чистая сборка текста без
@@ -163,6 +163,10 @@ function icsCalendar(rows: IcsShift[], name = "Смены AutoDoc", now = new Da
 
 
 const BOT_TOKEN = Deno.env.get("BOT_TOKEN") ?? "";
+// Mini App могут открывать из нескольких ботов (старый и новый). Каждый
+// подписывает initData своим токеном, поэтому проверяем по всем:
+// BOT_TOKEN и, через запятую, BOT_TOKENS.
+const TOKENS = [...new Set([BOT_TOKEN, ...(Deno.env.get("BOT_TOKENS") ?? "").split(",")].map(s => s.trim()).filter(Boolean))];
 const PROJECT_URL = Deno.env.get("PROJECT_URL") ?? "";
 const SERVICE_KEY = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
 const PUB_SALT = Deno.env.get("PUB_SALT") ?? SERVICE_KEY;          // соль для pub-id в рейтинге
@@ -199,21 +203,29 @@ function safeEq(a: string, b: string): boolean {
 
 type TgUser = { id: number; first_name?: string; last_name?: string; username?: string; photo_url?: string };
 
-async function verifyInitData(initData: string): Promise<TgUser | null> {
-  if (!BOT_TOKEN || !initData || initData.length > 4096) return null;
+// Причина отказа уходит клиенту: по ней приложение объясняет человеку, что
+// делать. Секретов в ней нет.
+type Verdict = { user: TgUser | null; reason: "" | "no_data" | "bad_signature" | "expired" | "no_user" };
+
+async function verifyInitData(initData: string): Promise<Verdict> {
+  if (!TOKENS.length || !initData || initData.length > 4096) return { user: null, reason: "no_data" };
   const p = new URLSearchParams(initData);
   const hash = p.get("hash") ?? "";
-  if (!/^[a-f0-9]{64}$/.test(hash)) return null;
+  if (!/^[a-f0-9]{64}$/.test(hash)) return { user: null, reason: "no_data" };
   p.delete("hash");
   const dcs = [...p.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join("\n");
-  const secret = await hmac(enc.encode("WebAppData"), enc.encode(BOT_TOKEN));
-  if (!safeEq(hex(await hmac(secret, enc.encode(dcs))), hash)) return null;
+  let signed = false;
+  for (const token of TOKENS) {
+    const secret = await hmac(enc.encode("WebAppData"), enc.encode(token));
+    if (safeEq(hex(await hmac(secret, enc.encode(dcs))), hash)) { signed = true; break; }
+  }
+  if (!signed) return { user: null, reason: "bad_signature" };
   const authDate = Number(p.get("auth_date") || 0);
-  if (!authDate || Date.now() / 1000 - authDate > MAX_AGE_SEC) return null;
+  if (!authDate || Date.now() / 1000 - authDate > MAX_AGE_SEC) return { user: null, reason: "expired" };
   try {
     const u = JSON.parse(p.get("user") || "null");
-    return u && Number.isSafeInteger(u.id) ? u : null;
-  } catch { return null; }
+    return u && Number.isSafeInteger(u.id) ? { user: u, reason: "" } : { user: null, reason: "no_user" };
+  } catch { return { user: null, reason: "no_user" }; }
 }
 
 const H = () => ({ apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json" });
@@ -248,7 +260,7 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(obj), { status, headers: { ...C, "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
   if (req.method === "OPTIONS") return new Response("ok", { headers: C });
-  if (!BOT_TOKEN || !PROJECT_URL || !SERVICE_KEY) return json({ error: "not configured" }, 500);
+  if (!TOKENS.length || !PROJECT_URL || !SERVICE_KEY) return json({ error: "not configured" }, 500);
 
   const url = new URL(req.url);
   if (req.method === "GET") {
@@ -264,14 +276,20 @@ Deno.serve(async (req) => {
     body = JSON.parse(raw);
   } catch { return json({ error: "bad json" }, 400); }
 
-  const user = await verifyInitData(String(body.initData ?? ""));
-  if (!user) return json({ error: "unauthorized" }, 401);
+  const { user, reason } = await verifyInitData(String(body.initData ?? ""));
+  if (!user) {
+    console.warn("api: 401", reason, "tokens:", TOKENS.length);
+    return json({ error: "unauthorized", reason }, 401);
+  }
   const uid = String(user.id);
   const action = String(body.action ?? "");
   if (tooFast(`${uid}:${action}`, action === "hello" ? 300 : 1000)) return json({ error: "slow down" }, 429);
 
   try {
     switch (action) {
+      case "ping":                                // самопроверка бота: подпись его токеном принята
+        return json({ ok: true, uid, tokens: TOKENS.length });
+
       case "hello": {
         const name = clean([user.first_name, user.last_name].filter(Boolean).join(" "), 60);
         await db("bot_users", {

@@ -163,7 +163,7 @@ async function api(action, payload = {}, timeout = 9000) {
       body: JSON.stringify({ initData: TG.initData, action, ...payload }),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { const e = new Error(j.error || 'http ' + r.status); e.status = r.status; throw e; }
+    if (!r.ok) { const e = new Error(j.error || 'http ' + r.status); e.status = r.status; e.reason = j.reason || ''; throw e; }
     return j;
   } finally { clearTimeout(t); }
 }
@@ -207,16 +207,8 @@ async function boot() {
 
   // 2. Подпись: сервер проверяет HMAC initData и возвращает доверенный id
   step('sign', 'run');
-  let hello = null, signNote = '';
-  if (IN_TG) {
-    try {
-      hello = await api('hello', {});
-      const unsafeId = String(TG.initDataUnsafe?.user?.id || '');
-      if (hello.uid && (!unsafeId || unsafeId === String(hello.uid))) { STATE.verified = true; STATE.uid = String(hello.uid); STATE.pub = String(hello.pub || ''); STATE.server = true; }
-      else signNote = 'не совпала';
-    } catch (e) { signNote = e.status === 401 ? 'не принята' : 'нет связи'; }
-  } else signNote = 'нет';
-  step('sign', STATE.verified ? 'ok' : 'warn', signNote);
+  const hello = await verifyAccount();
+  step('sign', STATE.verified ? 'ok' : 'warn', STATE.verified ? '' : VERIFY_TEXT[STATE.verifyState].short);
 
   // 3. Данные: локальная копия → облачная копия Telegram → чистый старт
   step('data', 'run');
@@ -258,7 +250,7 @@ async function boot() {
 
   const n = new Date(); STATE.calY = n.getFullYear(); STATE.calM = n.getMonth();
   $('app').hidden = false;
-  if (!STATE.verified) { const o = $('offline'); o.hidden = false; o.textContent = IN_TG ? 'Без подтверждения аккаунта: рейтинг и оповещения на паузе.' : 'Режим браузера: данные только на этом устройстве.'; }
+  renderVerify();
   renderAll();
   const hashTab = location.hash.replace('#', '');
   if (TABS.includes(hashTab) || RENDER[hashTab]) go(hashTab);
@@ -284,6 +276,56 @@ function onboard() {
     <div class="teams" style="margin-top:14px">${teams.map(k => { const m = teamMeta(k); return `<button class="team-b${k === t ? ' on' : ''}" style="--tc:${TEAM_COL[k] || 'var(--acc)'}" data-act="ob-team" data-v="${k}"><b>${esc(m.label)}</b><small>${esc(m.legend || '')}</small></button>`; }).join('')}</div>
     ${t ? `<div class="field" style="margin-top:14px"><span>Группа</span><div class="chips">${teamMeta(t).groups.map(x => `<button class="chip${x === g ? ' on' : ''}" data-act="ob-group" data-v="${x}">${x}</button>`).join('')}</div></div>` : ''}
     <button class="btn btn-acc btn-wide" style="margin-top:18px" data-act="ob-done" ${t && g ? '' : 'disabled'}>${t && g ? `Готово: ${esc(teamMeta(t).label)} ${g}` : 'Выбери смену и группу'}</button>`;
+}
+// ── подтверждение аккаунта ──
+// Сервер проверяет подпись Telegram и возвращает доверенный id. Без этого
+// пики и кошелёк работают, но рейтинг и оповещения — нет: писать в общую
+// базу от чужого имени нельзя.
+const VERIFY_TEXT = {
+  ok:       { short: '',            title: 'Аккаунт подтверждён', text: 'Telegram подтвердил, что это ты. Рейтинг и оповещения работают.' },
+  browser:  { short: 'браузер',     title: 'Открыто не из Telegram', text: 'Пики и кошелёк считаются, но рейтинг и оповещения работают, только если открыть трекер кнопкой «Трекер» в боте.' },
+  signature:{ short: 'не принята',  title: 'Сервер не узнал бота', text: 'Пики и кошелёк работают. Рейтинг и оповещения включатся после подтверждения — администратор уже видит это в боте. Попробуй позже.' },
+  expired:  { short: 'устарела',    title: 'Сессия Telegram устарела', text: 'Закрой трекер и открой его снова кнопкой в боте — подтверждение пройдёт само.' },
+  mismatch: { short: 'не совпала',  title: 'Аккаунт не совпал', text: 'Telegram прислал данные другого аккаунта. Закрой трекер и открой снова.' },
+  offline:  { short: 'нет связи',   title: 'Нет связи с сервером', text: 'Проверь интернет и нажми «Проверить снова». Записи сохраняются на телефоне.' },
+};
+async function verifyAccount() {
+  if (!IN_TG) { STATE.verifyState = 'browser'; return null; }
+  try {
+    const hello = await api('hello', {});
+    const unsafeId = String(TG.initDataUnsafe?.user?.id || '');
+    if (hello.uid && (!unsafeId || unsafeId === String(hello.uid))) {
+      STATE.verified = true; STATE.uid = String(hello.uid); STATE.pub = String(hello.pub || ''); STATE.server = true;
+      STATE.verifyState = 'ok';
+    } else STATE.verifyState = 'mismatch';
+    return hello;
+  } catch (e) {
+    STATE.verifyState = e.status === 401 ? (e.reason === 'expired' ? 'expired' : 'signature') : 'offline';
+    return null;
+  }
+}
+function verifyBanner() {
+  const v = VERIFY_TEXT[STATE.verifyState] || VERIFY_TEXT.offline;
+  const bot = STATE.verifyState === 'browser' || STATE.verifyState === 'expired';
+  return `<div class="vf-h"><span class="vf-ic">!</span><b>${v.title}</b></div><p>${v.text}</p>
+    <div class="vf-act">${STATE.verifyState === 'browser' ? '' : '<button class="btn btn-acc" data-act="reverify">Проверить снова</button>'}
+    ${bot ? '<button class="btn btn-ghost" data-act="open-bot">Открыть бота</button>' : ''}</div>`;
+}
+function renderVerify() {
+  const o = $('offline');
+  if (STATE.verified) { o.hidden = true; o.innerHTML = ''; }
+  else { o.hidden = false; o.innerHTML = verifyBanner(); }
+  const b = $('vf-badge');
+  if (b) { b.className = 'vf-badge ' + (STATE.verified ? 'ok' : 'no'); b.title = STATE.verified ? 'Аккаунт подтверждён Telegram' : 'Аккаунт не подтверждён'; }
+}
+async function reverify(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Проверяю…'; }
+  const hello = await verifyAccount();
+  if (STATE.verified) {
+    DB.uid = STATE.uid; save(); haptic.ok(); toast('Аккаунт подтверждён');
+    pushRank(); if (!hello?.profile || hello.profile.team !== DB.team) pushProfile();
+  } else { haptic.err(); toast(VERIFY_TEXT[STATE.verifyState].title); }
+  renderVerify(); renderAll();
 }
 function note(t) { const n = $('boot-note'); n.hidden = false; n.textContent = t; }
 
@@ -392,7 +434,7 @@ function dayName(day) { const [y, m, d] = day.split('-').map(Number); const dt =
 // ═════════════════════ ГЛАВНАЯ ═════════════════════
 function renderHeader() {
   $('me-name').textContent = DB.name || 'Сотрудник';
-  $('me-sub').textContent = 'M13 Outbound, Szczecin';
+  $('me-sub').innerHTML = `<span id="vf-badge" class="vf-badge ${STATE.verified ? 'ok' : 'no'}"></span>${STATE.verified ? 'подтверждён' : 'не подтверждён'}, M13 Outbound`;
   const av = $('av');
   if (DB.photo) { av.innerHTML = ''; const img = new Image(); img.alt = ''; img.referrerPolicy = 'no-referrer'; img.src = DB.photo; img.onerror = () => { av.innerHTML = `<span>${esc(DB.emoji)}</span>`; }; av.appendChild(img); }
   else av.innerHTML = `<span>${esc(DB.emoji)}</span>`;
@@ -882,8 +924,12 @@ function renderProfile() {
     <div class="field" style="margin-top:12px"><span>Тема</span><div class="chips">${th('auto', 'Как в Telegram')}${th('dark', 'Тёмная')}${th('light', 'Светлая')}</div></div>
     <div class="field" style="margin-top:12px"><span>Неделя в календаре начинается с</span><div class="chips"><button class="chip${DB.ws === 'mon' ? ' on' : ''}" data-act="ws" data-v="mon">понедельника</button><button class="chip${DB.ws === 'sun' ? ' on' : ''}" data-act="ws" data-v="sun">воскресенья</button></div></div>
   </div>
+  <h2 class="sec">Аккаунт</h2>
+  <div class="card vf-card ${STATE.verified ? 'ok' : 'no'}">${STATE.verified
+    ? `<div class="vf-h"><span class="vf-ic ok">✓</span><b>${VERIFY_TEXT.ok.title}</b></div><p>${VERIFY_TEXT.ok.text}</p>`
+    : verifyBanner()}</div>
   <h2 class="sec">Данные</h2>
-  <div class="card"><p style="color:var(--sub);font-size:14px">${STATE.verified ? 'Аккаунт подтверждён подписью Telegram.' : 'Аккаунт не подтверждён: рейтинг и оповещения выключены.'} ${CS ? 'Копия данных хранится в облаке Telegram и восстановится на новом телефоне.' : 'Облачная копия недоступна в этом окружении.'}</p>
+  <div class="card"><p style="color:var(--sub);font-size:14px">${CS ? 'Копия данных хранится в облаке Telegram и восстановится на новом телефоне.' : 'Облачная копия недоступна в этом окружении.'}</p>
     <button class="btn btn-bad btn-wide" style="margin-top:12px" data-act="wipe">Удалить все данные с устройства</button></div>`;
 }
 
@@ -965,6 +1011,7 @@ const ACT = {
     DB = defaults(); DB.uid = STATE.uid; DB.consent = { v: CFG.CONSENT_VERSION, at: new Date().toISOString() };
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {}
     toast('Данные удалены'); go('home'); renderAll(); }),
+  'reverify': el => reverify(el),
   'sheet-close': () => closeSheet(),
   'sheet-ok': () => { const f = STATE.sheetOk; STATE.sheetOk = null; closeSheet(); f && f(); },
 };

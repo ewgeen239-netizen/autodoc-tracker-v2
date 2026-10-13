@@ -9,12 +9,16 @@ Telegram-бот к Mini App: открывает трекер, показывае
 Переменные окружения — см. .env.example.
 """
 
+import hashlib
+import hmac
 import html
+import json
 import os
 import re
 import threading
 import time
 from datetime import timedelta
+from urllib.parse import urlencode
 
 import requests
 import telebot
@@ -558,7 +562,8 @@ ADMIN_HELP = (
     "/ntest — прислать себе все виды оповещений для проверки\n"
     "/nsend &lt;dark|orange|green|all&gt; [группа] текст — сообщение смене, с предпросмотром\n"
     "/npause, /nresume — остановить и вернуть рассылку (до перезапуска бота)\n"
-    "/rebuild [id|all] — пересобрать графики из schedule.json\n\n"
+    "/rebuild [id|all] — пересобрать графики из schedule.json\n"
+    "/check — принимает ли сервер подпись бота (подтверждение аккаунтов)\n\n"
     "<b>Прочее</b>\n"
     "/stats, /broadcast текст, /shift_add, /shift_del, /shift_who, /id"
 )
@@ -622,6 +627,7 @@ def cmd_nstatus(m):
     kinds = "\n".join(f"  {KIND_RU.get(k, k)}: {v}" for k, v in sorted(by_kind.items())) or "  —"
     state = "⏸ на паузе" if NOTIFY["paused"] else ("🟢 работает" if NOTIFY["last_tick"] else "🔴 поток не запускался")
     err = f"\nПоследняя ошибка: <code>{esc(NOTIFY['last_error'])}</code>" if NOTIFY["last_error"] else ""
+    err += f"\n\n🔐 Подтверждение аккаунтов: {'✅' if API_CHECK['ok'] else '❌' if API_CHECK['ok'] is False else '…'} {esc(API_CHECK['text'])}"
     send(m.chat.id,
          f"🔔 <b>Оповещения: {state}</b>\n\n"
          f"Последний круг: {ago(NOTIFY['last_tick'])} (каждые {TICK} с)\n"
@@ -822,6 +828,53 @@ def run_nsend(chat_id, flt, body):
             bad += 1
         time.sleep(0.05)
     send(chat_id, f"📣 Готово. Доставлено: <b>{ok}</b>, не дошло: <b>{bad}</b>")
+
+
+# ── самопроверка: принимает ли функция api подпись этого бота ─
+# Mini App подписан токеном бота, из которого его открыли. Если в секретах
+# Supabase лежит токен другого бота, функция отвечает 401 и аккаунты людей не
+# подтверждаются. Бот подписывает тестовый запрос своим токеном и узнаёт это
+# сам — секреты никуда не передаются, уходит только подпись.
+API_CHECK = {"ok": None, "text": "ещё не проверялось", "at": None}
+
+
+def api_selfcheck():
+    uid = next(iter(ADMIN_IDS), 1)
+    fields = {"auth_date": str(int(time.time())), "query_id": "selfcheck",
+              "user": json.dumps({"id": uid, "first_name": "selfcheck"}, separators=(",", ":"))}
+    dcs = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    secret = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
+    init = urlencode({**fields, "hash": hmac.new(secret, dcs.encode(), hashlib.sha256).hexdigest()})
+    try:
+        r = requests.post(f"{SUPABASE_URL}/functions/v1/{API_FN}", json={"initData": init, "action": "ping"},
+                          headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, timeout=15)
+        body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    except Exception as e:
+        API_CHECK.update(ok=False, text=f"функция {API_FN} недоступна: {e}", at=SH.now().isoformat())
+        return API_CHECK
+    if r.status_code == 200:
+        API_CHECK.update(ok=True, text=f"подпись бота принимается (токенов в функции: {body.get('tokens', '?')})")
+    elif r.status_code == 401 and body.get("reason") == "bad_signature":
+        API_CHECK.update(ok=False, text=(
+            "функция api НЕ принимает подпись этого бота — аккаунты не подтверждаются. "
+            "Supabase → Edge Functions → Secrets → добавь BOT_TOKENS = токен этого бота (тот же, что TOKEN в Railway)"))
+    elif r.status_code == 404:
+        API_CHECK.update(ok=False, text=f"функция {API_FN} не задеплоена (404)")
+    else:
+        API_CHECK.update(ok=False, text=f"функция ответила {r.status_code}: {str(body)[:120]}")
+    API_CHECK["at"] = SH.now().isoformat()
+    return API_CHECK
+
+
+@bot.message_handler(commands=["check"])
+def cmd_check(m):
+    if not admin_only(m):
+        return
+    c = api_selfcheck()
+    store = "✅ ключ базы есть" if STORE.ok() else "❌ нет SUPABASE_SERVICE_KEY"
+    send(m.chat.id, f"🔐 <b>Проверка подтверждения аккаунтов</b>\n\n"
+                    f"{'✅' if c['ok'] else '❌'} {esc(c['text'])}\n{store}\n"
+                    f"Mini App: <code>{esc(WEBAPP_URL)}</code>")
 
 
 # ── кнопки ───────────────────────────────────────────────────
@@ -1034,7 +1087,7 @@ def setup():
                       BotCommand("nsend", "Сообщение смене / группе"), BotCommand("ntest", "Тест оповещений себе"),
                       BotCommand("npause", "Пауза рассылки"), BotCommand("nresume", "Вернуть рассылку"),
                       BotCommand("nuser", "Профиль человека"), BotCommand("rebuild", "Пересобрать графики"),
-                      BotCommand("stats", "Статистика"), BotCommand("broadcast", "Рассылка всем")]
+                      BotCommand("check", "Проверка подтверждения аккаунтов"), BotCommand("stats", "Статистика"), BotCommand("broadcast", "Рассылка всем")]
         for aid in ADMIN_IDS:
             try:
                 bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(aid))
@@ -1053,6 +1106,17 @@ if __name__ == "__main__":
         print("⚠️ SUPABASE_SERVICE_KEY не задан — смены и оповещения выключены")
     if not ADMIN_IDS:
         print("ℹ️ ADMIN_TELEGRAM_IDS не задан — админ-команды недоступны")
+
+    def _startup_check():
+        c = api_selfcheck()
+        print(("🔐 " if c["ok"] else "❌ ") + "Подтверждение аккаунтов: " + c["text"])
+        if not c["ok"]:
+            for aid in ADMIN_IDS:
+                try:
+                    send(aid, f"❌ <b>Аккаунты не подтверждаются</b>\n\n{esc(c['text'])}\n\nПроверить снова: /check")
+                except Exception:
+                    pass
+    threading.Thread(target=_startup_check, daemon=True).start()
     print("✅ AutoDoc Tracker Bot запущен")
     # 409 Conflict — тем же токеном опрашивает кто-то ещё (старый контейнер при
     # передеплое или забытый экземпляр). Не падаем, ждём и пробуем снова.
