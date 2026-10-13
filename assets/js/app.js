@@ -457,8 +457,11 @@ function renderHome() {
   $('plate-month').textContent = mLabel(mk);
   barcode($('plate-bar'), code);
   const base = C.monthBonus(DB.entries, mk), absN = autoHours(mk).absences, pf = C.premiumFactor(absN);
-  countUp($('plate-bonus'), base);
-  $('plate-cap').textContent = base ? `премия за пики в этом месяце · с обецностью ×${fx(pf)} = ${money(base * pf)} zł` : 'премия за пики в этом месяце';
+  // На главной премия сразу с множителем обецности: без пропусков ×1,25.
+  countUp($('plate-bonus'), C.r2(base * pf));
+  $('plate-cap').textContent = !base ? 'премия за пики в этом месяце'
+    : pf ? `премия за пики с обецностью: ${money(base)} × ${fx(pf)}${absN ? `, пропусков ${absN}` : ', без пропусков'}`
+    : `премии нет: ${absN} ${plural(absN, 'пропуск', 'пропуска', 'пропусков')} (без них было бы ${money(base * 1.25)} zł)`;
 
   const ns = nextShift(now), box = $('next-shift');
   if (!STATE.sched) box.innerHTML = `<div class="next-ic">📅</div><div><b>График не загрузился</b><small>Проверь интернет и открой приложение снова.</small></div>`;
@@ -478,13 +481,14 @@ function renderHome() {
   $('h-shifts').textContent = new Set(es.map(e => e.shiftDate)).size;
 
   const total = Math.max(1, C.monthBonus(DB.entries, mk));
+  const pfH = C.premiumFactor(autoHours(mk).absences);
   const rows = Object.keys(C.ST).map(st => ({ st, a: C.monthAgg(DB.entries, st, mk) })).filter(r => r.a.n);
   $('home-st').innerHTML = rows.length ? rows.map(({ st, a }) => `
     <button class="strow" data-act="station" data-st="${st}">
       <span class="st-tag" style="background:${C.ST[st].col}">${C.ST[st].name}</span>
       <span class="strow-b"><b>${C.ST[st].full}</b><small>${int(a.P)} шт за ${h1(a.H)} ч, темп ${h1(a.pph)}</small>
         <span class="meter"><i style="width:${Math.round(a.bonus / total * 100)}%;background:${C.ST[st].col}"></i></span></span>
-      <span class="strow-r">${money(a.bonus)}<small>zł</small></span>
+      <span class="strow-r">${money(a.bonus * pfH)}<small>zł × ${fx(pfH)}</small></span>
     </button>`).join('')
     : `<div class="empty"><b>В этом месяце ещё нет записей</b>После смены запиши пики — премия посчитается сама.</div>`;
 
@@ -527,6 +531,7 @@ function renderPeaks() {
   const now = new Date(), mk = C.monthKey(now), today = C.shiftToday(now);
   const tEs = DB.entries.filter(e => e.station === st && e.shiftDate === today);
   const tp = tEs.reduce((s, e) => s + e.peaks, 0), th = tEs.reduce((s, e) => s + e.hours, 0), tc = C.calc(st, tp, th);
+  const pfP = C.premiumFactor(autoHours(mk).absences);
   const a = C.monthAgg(DB.entries, st, mk), tier = cfg.tr.findIndex(([lo, hi]) => Math.round(a.pph) >= lo && Math.round(a.pph) <= hi);
   const maxR = cfg.tr[cfg.tr.length - 1][2];
   $('gauge').innerHTML = `
@@ -539,7 +544,7 @@ function renderPeaks() {
     </div>
     <div class="steps" aria-label="Ступени ставки по темпу месяца">${cfg.tr.map(([lo, hi, r], i) => `<i class="${i < tier ? 'hit' : i === tier && a.H ? 'cur' : ''}" style="height:${18 + Math.round(r / maxR * 82)}%" title="${lo}–${hi === 999 ? '∞' : hi}: ${r} zł"></i>`).join('')}</div>
     <div class="steps-l"><span>0</span><span>норма ${cfg.norm}</span><span>${cfg.tr[cfg.tr.length - 1][0]}+</span></div>
-    <div class="gauge-f"><div><small style="color:var(--sub)">Премия за месяц</small><br><span style="font-size:13px;color:var(--sub)">${int(a.above)} шт × ${a.rate.toFixed(3).replace('.', ',')} zł, темп ${h1(a.pph)}</span></div><b>${money(a.bonus)} zł</b></div>`;
+    <div class="gauge-f"><div><small style="color:var(--sub)">Премия за месяц, с обецностью</small><br><span style="font-size:13px;color:var(--sub)">${int(a.above)} шт × ${a.rate.toFixed(3).replace('.', ',')} zł × ${fx(pfP)}, темп ${h1(a.pph)}</span></div><b>${money(a.bonus * pfP)} zł</b></div>`;
   renderForm();
   renderPeaksMonth();
 }
