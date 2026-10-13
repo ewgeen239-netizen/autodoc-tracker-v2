@@ -189,6 +189,9 @@ input,textarea,select{font:inherit;color:var(--text)}
 .tile{background:var(--card);border-radius:var(--r-card);padding:14px;text-align:left;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:2px;
   transition:transform .12s}
 .tile:active,.strow:active,.menu button:active{transform:scale(.98)}
+.rank-tile{margin-top:8px}
+.rank-ic{background:var(--acc-soft);font-size:18px}
+.rank-tile .strow-r small{white-space:nowrap}
 .tile-ic{width:34px;height:34px;border-radius:9px;background:var(--acc);color:var(--ink);display:grid;place-items:center;font:800 18px/1 var(--f-num);margin-bottom:8px}
 .tile small{color:var(--sub);font-size:12.5px}
 

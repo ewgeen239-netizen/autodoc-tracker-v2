@@ -480,6 +480,31 @@ function renderHome() {
 
   const w = walletView();
   $('home-wallet-sub').textContent = w.saved ? `${money(w.res.netto)} zł на руки` : 'посчитать зарплату';
+  homeRank();
+}
+
+// Место в рейтинге за месяц на главной. Таблицу берём раз в минуту, не чаще.
+async function homeRank() {
+  const sub = $('home-rank-sub'), place = $('home-rank-place');
+  const mk = C.monthKey(new Date()), c = STATE.rankCache;
+  let rows = c && c.mk === mk && Date.now() - c.at < 60000 ? c.rows : null;
+  if (!rows) {
+    try {
+      const r = await fetch(`${CFG.SB_URL}/rest/v1/leaderboard?month=eq.${mk}&order=bonus.desc&limit=300&select=pub,bonus`,
+        { headers: { apikey: CFG.SB_KEY, Authorization: 'Bearer ' + CFG.SB_KEY } });
+      if (!r.ok) throw 0;
+      rows = await r.json();
+      STATE.rankCache = { mk, rows, at: Date.now() };
+    } catch { sub.textContent = 'кто сколько заработал за месяц'; place.innerHTML = ''; return; }
+  }
+  const i = STATE.pub ? rows.findIndex(x => x.pub === STATE.pub) : -1;
+  if (i >= 0) {
+    sub.textContent = `ты на ${i + 1}-м месте из ${rows.length}`;
+    place.innerHTML = `#${i + 1}<small>${i === 0 ? 'лидер' : `до #${i}: ${money(Math.max(0, rows[i - 1].bonus - rows[i].bonus))} zł`}</small>`;
+  } else {
+    sub.textContent = rows.length ? `${rows.length} ${plural(rows.length, 'участник', 'участника', 'участников')} в этом месяце` : 'стань первым в этом месяце';
+    place.innerHTML = rows.length ? `${money(rows[0].bonus)}<small>zł у лидера</small>` : '';
+  }
 }
 
 // ═════════════════════ ПИКИ ═════════════════════
