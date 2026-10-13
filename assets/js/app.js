@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261013.1951';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261013.1954';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -1043,12 +1043,20 @@ function monthStats(mk) {
   const snap = live ? C.monthSnapshot(DB.entries, mk) : DB.archive[mk] || null;
   const base = snap ? snap.bonus : 0, pf = C.premiumFactor(a.absences);
   const ov = DB.ovt.filter(o => o.date.slice(0, 7) === mk);
-  const wallet = DB.wallet.hist.find(h => h.month === mk) || (DB.wallet.cur && DB.wallet.cur.month === mk ? { netto: C.salary(salaryInput(DB.wallet.cur.inp)).netto } : null);
+  // Вся сумма за месяц: сохранённый расчёт кошелька, иначе расчёт по графику и отметкам
+  const saved = DB.wallet.hist.find(h => h.month === mk);
+  let pay;
+  if (saved) pay = { netto: saved.netto, brutto: saved.brutto, src: 'saved' };
+  else {
+    const inp = DB.wallet.cur && DB.wallet.cur.month === mk ? DB.wallet.cur.inp : (DB.wallet.draft && DB.wallet.draft.month === mk ? DB.wallet.draft : autoInp(mk));
+    const r = C.salary(salaryInput(inp));
+    pay = { netto: r.netto, brutto: r.brutto, src: DB.wallet.cur && DB.wallet.cur.month === mk ? 'saved' : 'est' };
+  }
   return { mk, cur, has: !!p, scheduled, worked: a.shifts, hours: a.hours, night: a.night,
     urlopDays: p ? urlopDays : urlopMarked, urlopHours: a.urlop, absences: a.absences,
     holidays: p ? Object.keys(p.holidays).length : 0,
     ovtHours: ov.reduce((s, o) => s + o.hours, 0), ovt50: a.o50, ovt100: a.o100,
-    peaks: snap ? snap.peaks : 0, ppc: snap ? snap.ppc : 0, base, pf, premium: C.r2(base * pf), wallet };
+    peaks: snap ? snap.peaks : 0, ppc: snap ? snap.ppc : 0, base, pf, premium: C.r2(base * pf), pay };
 }
 
 function renderArchive() {
@@ -1061,7 +1069,7 @@ function renderArchive() {
     const t = monthStats(m);
     return `<div class="card mcard">
       <div class="mcard-h"><div><b>${mLabel(m)}</b>${t.cur ? '<span class="ms-live">идёт</span>' : ''}</div>
-        <div class="mcard-v">${money(t.premium)}<small>zł премии</small></div></div>
+        <div class="mcard-v">${money(t.pay.netto)}<small>zł на руки${t.pay.src === 'est' ? ', расчёт' : ''}</small><small>брутто ${money(t.pay.brutto)}</small></div></div>
       <div class="ms-grid">
         ${cell('🗓', 'Смен', t.has ? `${t.worked}` : '—', t.has ? `по графику ${t.scheduled}, ${h1(t.hours)} ч` : 'графика нет')}
         ${cell('🏖', 'Отпуск', t.urlopDays ? `${t.urlopDays} ${plural(t.urlopDays, 'день', 'дня', 'дней')}` : '—', t.urlopHours ? `${h1(t.urlopHours)} ч` : '')}
@@ -1071,7 +1079,7 @@ function renderArchive() {
         ${cell('🎉', 'Праздники', t.holidays ? `${t.holidays}` : '—')}
         ${cell('📦', 'Пики', t.peaks ? int(t.peaks) : '—', t.peaks ? `темп ${h1(t.ppc)}` : '')}
         ${cell('⭐', 'Премия', t.base ? `${money(t.base)}` : '—', t.base ? `× ${fx(t.pf)} = ${money(t.premium)} zł` : '')}
-        ${t.wallet ? cell('💼', 'На руки', `${money(t.wallet.netto)}`, 'из кошелька') : ''}
+        ${cell('🧾', 'Вычеты', money(Math.max(0, t.pay.brutto - t.pay.netto)), 'ZUS, здоровье, PIT')}
       </div></div>`;
   }).join('') || '<div class="empty"><b>Пока пусто</b>Итоги появятся, когда начнёшь записывать смены.</div>';
 }
