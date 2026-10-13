@@ -34,8 +34,12 @@ if not WEBAPP_URL.startswith("https://"):
 if not WEBAPP_URL.endswith("/"):
     WEBAPP_URL += "/"
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")                  # anon — только чтение рейтинга
+# URL и anon-ключ публичные (они же лежат в assets/js/config.js), поэтому есть значения по умолчанию.
+# Секрет здесь только один — SUPABASE_SERVICE_KEY, его задают в Railway → Variables.
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "https://mkuwkntdcpfsxhqblkic.supabase.co").rstrip("/")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rdXdrbnRkY3Bmc3hocWJsa2ljIiwicm9sZSI6"
+    "ImFub24iLCJpYXQiOjE3ODI5NTc3MDQsImV4cCI6MjA5ODUzMzcwNH0.k0_tWR0SgvWKBWmfkb9Z7qRLhHSAvkmmpGnQWEFm2f8")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")  # секрет: смены, оповещения, реестр
 API_FN = os.environ.get("API_FN", "api")
 ADMIN_IDS = {int(x) for x in os.environ.get("ADMIN_TELEGRAM_IDS", "").split(",") if x.strip().isdigit()}
@@ -744,4 +748,14 @@ if __name__ == "__main__":
     if not ADMIN_IDS:
         print("ℹ️ ADMIN_TELEGRAM_IDS не задан — админ-команды недоступны")
     print("✅ AutoDoc Tracker Bot запущен")
-    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=25)
+    # 409 Conflict — тем же токеном опрашивает кто-то ещё (старый контейнер при
+    # передеплое или забытый экземпляр). Не падаем, ждём и пробуем снова.
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=25)
+            break
+        except ApiTelegramException as e:
+            if e.error_code != 409:
+                raise
+            print("⏳ 409: работает другой экземпляр бота с этим токеном — жду 15 с")
+            time.sleep(15)
