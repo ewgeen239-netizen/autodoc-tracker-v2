@@ -358,6 +358,17 @@ input,textarea,select{font:inherit;color:var(--text)}
 .tm-tag::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--tc)}
 .rk{width:30px;text-align:center;font:700 18px var(--f-num);color:var(--sub);flex:none}
 .strow.me-row{box-shadow:inset 0 0 0 2px var(--acc)}
+.mcard-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.mcard-h b{font:700 21px/1.1 var(--f-num)}
+.ms-live{margin-left:8px;padding:2px 7px;border-radius:5px;background:var(--acc-soft);color:var(--acc);font:700 12px var(--f-num);vertical-align:3px}
+.mcard-v{text-align:right;font:800 24px/1 var(--f-num);color:var(--acc)}
+.mcard-v small{display:block;font:500 12px var(--f-txt);color:var(--sub);margin-top:2px}
+.ms-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:12px}
+.ms-c{background:var(--bg2);border-radius:10px;padding:8px 9px;min-width:0}
+.ms-c span{display:block;color:var(--sub);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ms-c b{display:block;font:700 18px/1.15 var(--f-num);margin-top:2px}
+.ms-c small{display:block;color:var(--sub);font-size:11px;line-height:1.3;margin-top:2px}
+@media (max-width:360px){ .ms-grid{grid-template-columns:repeat(2,minmax(0,1fr))} }
 .rate-card{margin-bottom:12px}
 .rate-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line);font-size:14px}
 .rate-row b{font:700 17px var(--f-num)}

@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261013.1930';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261013.1951';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -1032,10 +1032,48 @@ function teamTag(team, grp) {
   return `<span class="tm-tag" style="--tc:${TEAM_COL[team]}" title="Смена ${esc(label)}">${esc(label)}</span>`;
 }
 
+// Итоги месяца: всё, что влияет на деньги, — смены, отпуск, пропуски,
+// праздники, сверхурочные, ночные, пики и премия с обецностью.
+function monthStats(mk) {
+  const p = plan(mk), a = autoHours(mk), cur = mk === C.monthKey(new Date());
+  let scheduled = 0, urlopDays = 0;
+  if (p) for (const [d, span] of Object.entries(p.days)) if (span) { scheduled++; if (DB.urlop[mk]?.[d]) urlopDays++; }
+  const urlopMarked = Object.keys(DB.urlop[mk] || {}).length;
+  const live = DB.entries.some(e => e.shiftDate.slice(0, 7) === mk);
+  const snap = live ? C.monthSnapshot(DB.entries, mk) : DB.archive[mk] || null;
+  const base = snap ? snap.bonus : 0, pf = C.premiumFactor(a.absences);
+  const ov = DB.ovt.filter(o => o.date.slice(0, 7) === mk);
+  const wallet = DB.wallet.hist.find(h => h.month === mk) || (DB.wallet.cur && DB.wallet.cur.month === mk ? { netto: C.salary(salaryInput(DB.wallet.cur.inp)).netto } : null);
+  return { mk, cur, has: !!p, scheduled, worked: a.shifts, hours: a.hours, night: a.night,
+    urlopDays: p ? urlopDays : urlopMarked, urlopHours: a.urlop, absences: a.absences,
+    holidays: p ? Object.keys(p.holidays).length : 0,
+    ovtHours: ov.reduce((s, o) => s + o.hours, 0), ovt50: a.o50, ovt100: a.o100,
+    peaks: snap ? snap.peaks : 0, ppc: snap ? snap.ppc : 0, base, pf, premium: C.r2(base * pf), wallet };
+}
+
 function renderArchive() {
-  const ms = Object.keys(DB.archive).sort().reverse();
-  $('archive-list').innerHTML = ms.length ? ms.map(m => { const a = DB.archive[m]; return `<div class="whist"><div><b>${mLabel(m)}</b><small>${int(a.peaks)} шт, ${h1(a.hours)} ч, ${int(a.shifts)} ${plural(a.shifts, 'смена', 'смены', 'смен')}, темп ${h1(a.ppc)}</small></div><div class="v">${money(a.bonus)}<small>zł премии</small></div></div>`; }).join('')
-    : '<div class="empty"><b>Архив пуст</b>В начале месяца итоги прошлого месяца сохраняются сюда.</div>';
+  const now = C.monthKey(new Date());
+  const keys = new Set([now, ...Object.keys(DB.archive), ...Object.keys(DB.urlop), ...Object.keys(DB.absent),
+    ...DB.ovt.map(o => o.date.slice(0, 7)), ...DB.wallet.hist.map(h => h.month)]);
+  const ms = [...keys].filter(m => RE_MK.test(m) && m <= now).sort().reverse().slice(0, 12);
+  const cell = (ic, label, val, note = '') => `<div class="ms-c"><span>${ic} ${label}</span><b>${val}</b>${note ? `<small>${note}</small>` : ''}</div>`;
+  $('archive-list').innerHTML = ms.map(m => {
+    const t = monthStats(m);
+    return `<div class="card mcard">
+      <div class="mcard-h"><div><b>${mLabel(m)}</b>${t.cur ? '<span class="ms-live">идёт</span>' : ''}</div>
+        <div class="mcard-v">${money(t.premium)}<small>zł премии</small></div></div>
+      <div class="ms-grid">
+        ${cell('🗓', 'Смен', t.has ? `${t.worked}` : '—', t.has ? `по графику ${t.scheduled}, ${h1(t.hours)} ч` : 'графика нет')}
+        ${cell('🏖', 'Отпуск', t.urlopDays ? `${t.urlopDays} ${plural(t.urlopDays, 'день', 'дня', 'дней')}` : '—', t.urlopHours ? `${h1(t.urlopHours)} ч` : '')}
+        ${cell('⚠️', 'Пропуски', `${t.absences}`, `премия ×${fx(t.pf)}`)}
+        ${cell('⏱', 'Доп. часы', t.ovtHours ? `${h1(t.ovtHours)} ч` : '—', t.ovtHours ? [t.ovt50 ? `+50% ${h1(t.ovt50)} ч` : '', t.ovt100 ? `+100% ${h1(t.ovt100)} ч` : ''].filter(Boolean).join(', ') : '')}
+        ${cell('🌙', 'Ночных', t.night ? `${h1(t.night)} ч` : '—')}
+        ${cell('🎉', 'Праздники', t.holidays ? `${t.holidays}` : '—')}
+        ${cell('📦', 'Пики', t.peaks ? int(t.peaks) : '—', t.peaks ? `темп ${h1(t.ppc)}` : '')}
+        ${cell('⭐', 'Премия', t.base ? `${money(t.base)}` : '—', t.base ? `× ${fx(t.pf)} = ${money(t.premium)} zł` : '')}
+        ${t.wallet ? cell('💼', 'На руки', `${money(t.wallet.netto)}`, 'из кошелька') : ''}
+      </div></div>`;
+  }).join('') || '<div class="empty"><b>Пока пусто</b>Итоги появятся, когда начнёшь записывать смены.</div>';
 }
 
 function renderRates() {
