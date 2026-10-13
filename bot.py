@@ -19,8 +19,8 @@ from datetime import timedelta
 import requests
 import telebot
 from telebot.apihelper import ApiTelegramException
-from telebot.types import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup,
-                           MenuButtonWebApp, WebAppInfo)
+from telebot.types import (BotCommand, BotCommandScopeChat, InlineKeyboardButton,
+                           InlineKeyboardMarkup, MenuButtonWebApp, WebAppInfo)
 
 import shifts as SH
 
@@ -320,7 +320,9 @@ def pay_text():
 
 
 # ── команды ──────────────────────────────────────────────────
-STATE = {}          # uid → ожидание ввода: ("calc", st) | ("bc", text)
+STATE = {}          # uid → ожидание ввода: ("calc", st) | ("bc", text) | ("nsend", team, grp, text)
+# Состояние фонового потока оповещений — для /nstatus. Пауза живёт до перезапуска бота.
+NOTIFY = {"paused": False, "last_tick": None, "last_error": None, "sent": 0, "failed": 0, "started": None}
 
 
 @bot.message_handler(commands=["start", "menu", "help"])
@@ -544,6 +546,284 @@ def cmd_shift_who(m):
     send(m.chat.id, f"👷 <b>{day}</b>\n\n{body}")
 
 
+# ── админ: оповещения ────────────────────────────────────────
+KIND_RU = {"h12": "за 12 ч", "h1": "за час", "peaks": "записать пики", "pay": "15-е, кошелёк"}
+ADMIN_HELP = (
+    "🛠 <b>Админ-команды</b>\n\n"
+    "<b>Оповещения</b>\n"
+    "/nstatus — работает ли рассылка, когда был последний круг, сколько ушло за сутки\n"
+    "/nplan [часы] — кому и что уйдёт в ближайшие часы (по умолчанию 24)\n"
+    "/nlog [N] — последние N отправленных (по умолчанию 20)\n"
+    "/nuser &lt;id&gt; — настройки человека, его смены и что ему уходило\n"
+    "/ntest — прислать себе все виды оповещений для проверки\n"
+    "/nsend &lt;dark|orange|green|all&gt; [группа] текст — сообщение смене, с предпросмотром\n"
+    "/npause, /nresume — остановить и вернуть рассылку (до перезапуска бота)\n"
+    "/rebuild [id|all] — пересобрать графики из schedule.json\n\n"
+    "<b>Прочее</b>\n"
+    "/stats, /broadcast текст, /shift_add, /shift_del, /shift_who, /id"
+)
+
+
+def need_store(m):
+    if STORE.ok():
+        return True
+    send(m.chat.id, no_store())
+    return False
+
+
+def ago(iso):
+    if not iso:
+        return "никогда"
+    try:
+        from datetime import datetime as _dt
+        t = _dt.fromisoformat(str(iso).replace("Z", "+00:00"))
+        sec = int((SH.now() - t).total_seconds())
+    except Exception:
+        return str(iso)
+    if sec < 90:
+        return f"{sec} с назад"
+    if sec < 5400:
+        return f"{sec // 60} мин назад"
+    return f"{sec // 3600} ч назад"
+
+
+def names_map():
+    try:
+        return {str(u["uid"]): u.get("name") or str(u["uid"]) for u in STORE.users()}
+    except Exception:
+        return {}
+
+
+@bot.message_handler(commands=["admin"])
+def cmd_admin(m):
+    if admin_only(m):
+        send(m.chat.id, ADMIN_HELP)
+
+
+@bot.message_handler(commands=["nstatus"])
+def cmd_nstatus(m):
+    if not admin_only(m) or not need_store(m):
+        return
+    since = (SH.now() - timedelta(days=1)).isoformat()
+    try:
+        users = STORE.users()
+        log = STORE.log_since(since)
+        today = SH.today()
+        rows = STORE.get_shifts(since=today.isoformat(), until=(today + timedelta(days=1)).isoformat())
+    except Exception as e:
+        return send(m.chat.id, f"⚠️ База недоступна: <code>{esc(e)}</code>")
+    active = [u for u in users if u.get("active")]
+    with_team = [u for u in active if u.get("team")]
+    queue = [u for u in users if u.get("rebuild")]
+    by_kind = {}
+    for r in log:
+        k = r["key"].split(":")[-1] if not r["key"].startswith("pay:") else "pay"
+        by_kind[k] = by_kind.get(k, 0) + 1
+    kinds = "\n".join(f"  {KIND_RU.get(k, k)}: {v}" for k, v in sorted(by_kind.items())) or "  —"
+    state = "⏸ на паузе" if NOTIFY["paused"] else ("🟢 работает" if NOTIFY["last_tick"] else "🔴 поток не запускался")
+    err = f"\nПоследняя ошибка: <code>{esc(NOTIFY['last_error'])}</code>" if NOTIFY["last_error"] else ""
+    send(m.chat.id,
+         f"🔔 <b>Оповещения: {state}</b>\n\n"
+         f"Последний круг: {ago(NOTIFY['last_tick'])} (каждые {TICK} с)\n"
+         f"С запуска бота: ушло {NOTIFY['sent']}, не дошло {NOTIFY['failed']}\n\n"
+         f"Активных: <b>{len(active)}</b>, со сменой: <b>{len(with_team)}</b>\n"
+         f"Ждут пересборки графика: {len(queue)}\n"
+         f"Смен сегодня и завтра: {len(rows)}\n\n"
+         f"За сутки отправлено: <b>{len(log)}</b>\n{kinds}{err}")
+
+
+@bot.message_handler(commands=["nplan"])
+def cmd_nplan(m):
+    if not admin_only(m) or not need_store(m):
+        return
+    p = m.text.split()
+    hours = int(p[1]) if len(p) > 1 and p[1].isdigit() else 24
+    hours = max(1, min(hours, 72))
+    now = SH.now()
+    try:
+        users = {str(u["uid"]): u for u in STORE.users(active="is.true")}
+        rows = STORE.get_shifts(since=(now.date() - timedelta(days=1)).isoformat(),
+                                until=(now + timedelta(hours=hours)).date().isoformat())
+        sent = {(r["uid"], r["key"]) for r in STORE.log_since((now - timedelta(days=3)).isoformat(), limit=2000)}
+    except Exception as e:
+        return send(m.chat.id, f"⚠️ База недоступна: <code>{esc(e)}</code>")
+    events = []
+    for r in rows:
+        u = users.get(str(r["uid"]))
+        if not u:
+            continue
+        pr = SH.prefs(u)
+        start, end = SH.bounds(r)
+        day = str(r["day"])[:10]
+        for kind, at in (("h12", start - timedelta(hours=12)), ("h1", start - timedelta(hours=1)),
+                         ("peaks", end + timedelta(minutes=15))):
+            if pr[kind] and now - timedelta(minutes=5) <= at <= now + timedelta(hours=hours) \
+                    and (str(r["uid"]), f"{day}:{kind}") not in sent:
+                events.append((at, u.get("name") or r["uid"], kind, SH.span_text(r)))
+    events.sort(key=lambda e: e[0])
+    if not events:
+        return send(m.chat.id, f"📭 В ближайшие {hours} ч оповещений нет.")
+    lines = [f"<code>{at:%d.%m %H:%M}</code> {esc(n)} — {KIND_RU[k]} ({sp})" for at, n, k, sp in events[:60]]
+    more = f"\n…и ещё {len(events) - 60}" if len(events) > 60 else ""
+    send(m.chat.id, f"🗓 <b>План на {hours} ч</b> — {len(events)} шт.\n\n" + "\n".join(lines) + more)
+
+
+@bot.message_handler(commands=["nlog"])
+def cmd_nlog(m):
+    if not admin_only(m) or not need_store(m):
+        return
+    p = m.text.split()
+    n = int(p[1]) if len(p) > 1 and p[1].isdigit() else 20
+    try:
+        log = STORE.log_since((SH.now() - timedelta(days=30)).isoformat(), limit=max(1, min(n, 100)))
+    except Exception as e:
+        return send(m.chat.id, f"⚠️ База недоступна: <code>{esc(e)}</code>")
+    if not log:
+        return send(m.chat.id, "📭 Журнал пуст.")
+    names = names_map()
+    lines = []
+    for r in log:
+        kind = "pay" if r["key"].startswith("pay:") else r["key"].split(":")[-1]
+        lines.append(f"<code>{str(r['sent_at'])[5:16].replace('T', ' ')}</code> {esc(names.get(str(r['uid']), r['uid']))} — "
+                     f"{KIND_RU.get(kind, kind)} <i>{esc(r['key'])}</i>")
+    send(m.chat.id, "🧾 <b>Последние оповещения</b>\n\n" + "\n".join(lines))
+
+
+@bot.message_handler(commands=["nuser"])
+def cmd_nuser(m):
+    if not admin_only(m) or not need_store(m):
+        return
+    p = m.text.split()
+    if len(p) < 2 or not p[1].isdigit():
+        return send(m.chat.id, "Формат: <code>/nuser 123456789</code>. ID человек узнаёт командой /id.")
+    uid = p[1]
+    u = get_user(uid)
+    if not u:
+        return send(m.chat.id, "Такого пользователя в базе нет — он ещё не нажимал /start и не открывал трекер.")
+    pr = SH.prefs(u)
+    flags = ", ".join(f"{'✅' if pr[k] else '▫️'} {KIND_RU[k]}" for k in ("h12", "h1", "peaks", "pay"))
+    today = SH.today()
+    rows = my_rows(uid, today, today + timedelta(days=14))[:5]
+    try:
+        log = STORE.log_since((SH.now() - timedelta(days=14)).isoformat(), uid=uid, limit=8)
+    except Exception:
+        log = []
+    shifts = "\n".join(SH.line(r) for r in rows) or "смен нет"
+    sent = "\n".join(f"<code>{str(r['sent_at'])[5:16].replace('T', ' ')}</code> {esc(r['key'])}" for r in log) or "ничего"
+    off = ", ".join((u.get("off") or [])[:10]) or "—"
+    send(m.chat.id,
+         f"👷 <b>{esc(u.get('name') or uid)}</b> <code>{uid}</code>\n"
+         f"{'🟢 активен' if u.get('active') else '🔴 заблокировал бота'}, {team_line(u)}\n"
+         f"Оповещения: {flags}\nОтпуск: {esc(off)}\n\n"
+         f"<b>Ближайшие смены</b>\n{shifts}\n\n<b>Уходило за 14 дней</b>\n{sent}")
+
+
+@bot.message_handler(commands=["ntest"])
+def cmd_ntest(m):
+    """Прислать себе все виды оповещений — проверить вид и кнопки. В журнал не пишется."""
+    if not admin_only(m):
+        return
+    now = SH.now()
+    soon = now + timedelta(hours=1)
+    row = {"uid": str(m.from_user.id), "day": soon.date().isoformat(), "starts": soon.strftime("%H:%M:00"),
+           "ends": (soon + timedelta(hours=8)).strftime("%H:%M:00"), "kind": "DARK"}
+    send(m.chat.id, "🧪 Тест: ниже четыре оповещения в том виде, в каком их получат люди.")
+    for kind in ("h12", "h1", "peaks", "pay"):
+        r = dict(row)
+        if kind == "h12":
+            later = now + timedelta(hours=12)
+            r.update(day=later.date().isoformat(), starts=later.strftime("%H:%M:00"), ends=(later + timedelta(hours=8)).strftime("%H:%M:00"))
+        send(m.chat.id, notify_text(kind, r), notify_kb_for(kind), effect="party" if kind == "pay" else None)
+        time.sleep(0.3)
+
+
+@bot.message_handler(commands=["npause", "nresume"])
+def cmd_npause(m):
+    if not admin_only(m):
+        return
+    NOTIFY["paused"] = m.text.split()[0].split("@")[0] == "/npause"
+    send(m.chat.id, "⏸ Оповещения на паузе. Графики продолжают собираться. Вернуть: /nresume. "
+                    "После перезапуска бота пауза снимается сама." if NOTIFY["paused"]
+         else "▶️ Оповещения снова работают. Пропущенные за паузу напоминания уйдут, если их время ещё не прошло.")
+
+
+@bot.message_handler(commands=["rebuild"])
+def cmd_rebuild(m):
+    if not admin_only(m) or not need_store(m):
+        return
+    p = m.text.split()
+    try:
+        if len(p) > 1 and p[1].isdigit():
+            STORE.patch_user(p[1], {"rebuild": True})
+            what = f"пользователя <code>{p[1]}</code>"
+        else:
+            STORE.mark_all_rebuild()
+            what = "всех со сменой"
+    except Exception as e:
+        return send(m.chat.id, f"⚠️ {esc(e)}")
+    send(m.chat.id, f"♻️ График {what} пересоберётся на следующем круге (до {TICK} с).")
+
+
+@bot.message_handler(commands=["nsend"])
+def cmd_nsend(m):
+    """/nsend dark A текст | /nsend orange текст | /nsend all текст"""
+    if not admin_only(m) or not need_store(m):
+        return
+    parts = m.text.split(maxsplit=3)
+    teams = list((SCHED or {}).get("teams", {}).keys())
+    if len(parts) < 3 or parts[1].lower() not in teams + ["all"]:
+        return send(m.chat.id, "Формат:\n<code>/nsend dark A Автобус задерживается на 15 минут</code>\n"
+                               "<code>/nsend orange Завтра собрание в 13:30</code>\n<code>/nsend all текст</code>")
+    team = parts[1].lower()
+    grp = None
+    rest = " ".join(parts[2:])
+    first, _, tail = rest.partition(" ")
+    if team != "all" and re.fullmatch(r"[A-Fa-f]", first) and tail.strip():
+        grp, rest = first.upper(), tail
+    text = rest.strip()
+    flt = {"active": "is.true"}
+    if team != "all":
+        flt["team"] = f"eq.{team}"
+    if grp:
+        flt["grp"] = f"eq.{grp}"
+    try:
+        n = len(STORE.users(**flt))
+    except Exception as e:
+        return send(m.chat.id, f"⚠️ {esc(e)}")
+    who = "всем" if team == "all" else f"{team.upper()}{' ' + grp if grp else ''}"
+    body = f"📣 <b>{esc(who if team != 'all' else 'Всем сменам')}</b>\n\n{text}"
+    try:
+        send(m.chat.id, "Предпросмотр:\n\n" + body)
+    except ApiTelegramException as e:
+        return send(m.chat.id, f"⚠️ Текст не принят Telegram: <code>{esc(e.description)}</code>")
+    STATE[m.from_user.id] = ("nsend", flt, body)
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton(f"📣 Отправить ({n})", callback_data="ns_go"), InlineKeyboardButton("Отмена", callback_data="menu"))
+    send(m.chat.id, f"Отправить <b>{n}</b> получателям ({esc(who)})?", kb)
+
+
+def run_nsend(chat_id, flt, body):
+    try:
+        users = [u["uid"] for u in STORE.users(**flt)]
+    except Exception:
+        return send(chat_id, "⚠️ База недоступна.")
+    ok = bad = 0
+    for uid in users:
+        try:
+            bot.send_message(int(uid), body, disable_web_page_preview=True, reply_markup=notify_kb_for("h1"))
+            ok += 1
+        except ApiTelegramException as e:
+            if e.error_code == 429:
+                time.sleep(int((e.result_json or {}).get("parameters", {}).get("retry_after", 3)))
+            elif gone(e):
+                set_inactive(uid)
+            bad += 1
+        except Exception:
+            bad += 1
+        time.sleep(0.05)
+    send(chat_id, f"📣 Готово. Доставлено: <b>{ok}</b>, не дошло: <b>{bad}</b>")
+
+
 # ── кнопки ───────────────────────────────────────────────────
 @bot.callback_query_handler(func=lambda c: True)
 def on_cb(c):
@@ -623,6 +903,12 @@ def handle_cb(c, uid, d):
         return send_ics(chat, uid)
     if d == "ics_new":
         return send_ics(chat, uid, renew=True)
+    if d == "ns_go" and is_admin(uid):
+        st = STATE.pop(uid, None)
+        if st and st[0] == "nsend":
+            edit(c, "📣 Отправка запущена.")
+            threading.Thread(target=run_nsend, args=(chat, st[1], st[2]), daemon=True).start()
+        return
     if d == "bc_go" and is_admin(uid):
         st = STATE.pop(uid, None)
         if st and st[0] == "bc":
@@ -694,6 +980,9 @@ def tick(state):
             SH.rebuild_user(STORE, SCHED, u)
         except Exception as e:
             print("rebuild", u.get("uid"), e)
+    NOTIFY["last_tick"] = SH.now().isoformat()
+    if NOTIFY["paused"]:
+        return
     # 3. разослать то, что пора
     users = STORE.users(active="is.true")
     a = (today - timedelta(days=1)).isoformat()
@@ -704,12 +993,15 @@ def tick(state):
             continue                                  # уже отправлено
         try:
             send(int(uid), notify_text(kind, row), notify_kb_for(kind), effect="party" if kind == "pay" else None)
+            NOTIFY["sent"] += 1
         except ApiTelegramException as e:
+            NOTIFY["failed"] += 1
             if gone(e):
                 set_inactive(uid)
             else:
                 STORE.unclaim(uid, key)              # временная ошибка — повторим на следующем круге
         except Exception:
+            NOTIFY["failed"] += 1
             STORE.unclaim(uid, key)
         time.sleep(0.05)
 
@@ -719,7 +1011,9 @@ def notifier():
     while True:
         try:
             tick(state)
+            NOTIFY["last_error"] = None
         except Exception as e:
+            NOTIFY["last_error"] = f"{SH.now():%d.%m %H:%M} {e}"[:300]
             print("оповещения:", e)
         time.sleep(TICK)
 
@@ -734,6 +1028,18 @@ def setup():
             BotCommand("pay", "Когда обновится кошелёк"), BotCommand("calendar", "Смены в календарь телефона"),
         ])
         bot.set_chat_menu_button(menu_button=MenuButtonWebApp("web_app", "Трекер", WebAppInfo(url=WEBAPP_URL)))
+        # админам — свой список команд в меню «/» (остальные его не видят)
+        admin_cmds = [BotCommand("admin", "Все админ-команды"), BotCommand("nstatus", "Состояние оповещений"),
+                      BotCommand("nplan", "Что уйдёт в ближайшие сутки"), BotCommand("nlog", "Журнал отправок"),
+                      BotCommand("nsend", "Сообщение смене / группе"), BotCommand("ntest", "Тест оповещений себе"),
+                      BotCommand("npause", "Пауза рассылки"), BotCommand("nresume", "Вернуть рассылку"),
+                      BotCommand("nuser", "Профиль человека"), BotCommand("rebuild", "Пересобрать графики"),
+                      BotCommand("stats", "Статистика"), BotCommand("broadcast", "Рассылка всем")]
+        for aid in ADMIN_IDS:
+            try:
+                bot.set_my_commands(admin_cmds, scope=BotCommandScopeChat(aid))
+            except Exception as e:
+                print("admin commands", aid, e)
     except Exception as e:
         print("setup:", e)
 

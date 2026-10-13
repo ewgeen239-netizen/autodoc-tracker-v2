@@ -337,6 +337,13 @@ class Store:
         self.s.delete(f"{self.url}/rest/v1/notify_log", params={"uid": f"eq.{uid}", "key": f"eq.{key}"},
                       headers=self._h(prefer="return=minimal"), timeout=self.timeout)
 
+    def log_since(self, since_iso, uid=None, limit=500):
+        """Журнал отправленных оповещений, свежие сверху."""
+        p = {"select": "uid,key,sent_at", "sent_at": f"gte.{since_iso}", "order": "sent_at.desc", "limit": str(limit)}
+        if uid is not None:
+            p["uid"] = f"eq.{uid}"
+        return self._get("notify_log", p)
+
     def prune_log(self, days=60):
         cut = (now() - timedelta(days=days)).isoformat()
         self.s.delete(f"{self.url}/rest/v1/notify_log", params={"sent_at": f"lt.{cut}"},
