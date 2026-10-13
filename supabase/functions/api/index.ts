@@ -165,8 +165,9 @@ Deno.serve(async (req) => {
         const shifts = Math.round(num(r.shifts, 0, 31));
         const bonus = num(r.bonus, 0, 20_000);
         const ppc = hours > 0 ? peaks / hours : 0;
-        // правдоподобие: самая щедрая ставка — 0,74 zł за штуку сверх нормы
-        if (bonus > peaks * 0.74 + 0.01 || ppc > 600 || hours > shifts * 16 + 0.01)
+        // правдоподобие: самая щедрая ставка — 0,74 zł за штуку сверх нормы,
+        // плюс 25% за обецность (премия в рейтинге — с этим множителем)
+        if (bonus > peaks * 0.74 * 1.25 + 0.01 || ppc > 600 || hours > shifts * 16 + 0.01)
           return json({ error: "implausible" }, 422);
         const row = {
           uid, month, pub: await pubId(uid),

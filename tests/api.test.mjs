@@ -49,6 +49,10 @@ await t('верная подпись — uid берётся из подписи'
   const j = await r.json();
   assert.equal(r.status, 200); assert.equal(j.uid, '777'); assert.match(j.pub, /^[0-9a-f]{16}$/);
 });
+await t('rank: премия с обецностью ×1,25 проходит', async () => {
+  const r = await post({ initData: initData({ ...me, id: 791 }), action: 'rank', row: { month: new Date().toISOString().slice(0, 7), peaks: 1000, hours: 16, shifts: 2, bonus: 1000 * 0.74 * 1.25 } });
+  assert.equal(r.status, 200);
+});
 await t('rank: неправдоподобная премия — 422', async () => {
   const r = await post({ initData: initData({ ...me, id: 778 }), action: 'rank', row: { month: new Date().toISOString().slice(0, 7), peaks: 100, hours: 8, shifts: 1, bonus: 5000 } });
   assert.equal(r.status, 422);

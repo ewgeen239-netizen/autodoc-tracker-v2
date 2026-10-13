@@ -182,7 +182,9 @@ function pushRank() {
   clearTimeout(_rankT);
   _rankT = setTimeout(() => {
     const m = C.monthKey(new Date()), s = C.monthSnapshot(DB.entries, m);
-    api('rank', { row: { month: m, name: DB.name || 'Аноним', emoji: DB.emoji, team: DB.team, group: DB.group, bonus: s.bonus, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
+    // В рейтинг — премия с обецностью, как на главной: без пропусков ×1,25
+    const bonus = C.r2(s.bonus * C.premiumFactor(autoHours(m).absences));
+    api('rank', { row: { month: m, name: DB.name || 'Аноним', emoji: DB.emoji, team: DB.team, group: DB.group, bonus, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
   }, 1500);
 }
 let _profT = null;
@@ -666,7 +668,7 @@ function markDay(kind, other, day) {
   if (DB[kind][mk][d]) delete DB[kind][mk][d];
   else { DB[kind][mk][d] = 1; if (DB[other][mk]) delete DB[other][mk][d]; }
   save(); haptic.ok(); closeSheet(); renderCal(); pushProfile();
-  if (kind === 'absent') { const n = Object.keys(DB.absent[mk] || {}).length; toast(`Пропусков в месяце: ${n}, премия ×${fx(C.premiumFactor(n))}`); }
+  if (kind === 'absent') { pushRank(); const n = Object.keys(DB.absent[mk] || {}).length; toast(`Пропусков в месяце: ${n}, премия ×${fx(C.premiumFactor(n))}`); }
 }
 
 function daySheet(d) {

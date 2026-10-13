@@ -301,7 +301,8 @@ def rating_text():
         tag = f" <i>{esc((x.get('team') or '').upper())} {esc(x.get('grp') or '')}</i>".rstrip() if x.get("team") else ""
         lines.append(f"{medal[i] if i < 3 else f'{i + 1}.'} {esc(x.get('emoji') or '👷')} <b>{esc(x.get('name') or 'Аноним')}</b>{tag} — <b>{b:.2f} zł</b>\n"
                      f"<code>{'█' * fill}{'░' * (8 - fill)}</code> {int(x.get('peaks') or 0)} шт, {int(x.get('shifts') or 0)} смен")
-    return f"🏆 <b>Рейтинг премий, {month}</b>\n\n" + "\n".join(lines)
+    return (f"🏆 <b>Рейтинг премий, {month}</b>\n<i>премия с обецностью: без пропусков ×1,25</i>\n\n"
+            + "\n".join(lines))
 
 
 def calc_text(st, peaks, hours):
