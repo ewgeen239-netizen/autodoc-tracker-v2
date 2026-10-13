@@ -67,6 +67,8 @@ supabase secrets set BOT_TOKEN=... PROJECT_URL=https://mkuwkntdcpfsxhqblkic.supa
 
 GitHub → Settings → Pages → Deploy from branch `main`, папка `/`. Адрес вида `https://<user>.github.io/<repo>/`. Ключи Supabase — в `assets/js/config.js`.
 
+**Обновление приложения.** Telegram кэширует файлы, поэтому после правок в `assets/` запусти `python3 tools/bump_version.py` и закоммить. Приложение при запуске сверит версию с `version.json` и само перезагрузится на новую.
+
 ### 4. Бот на Railway
 
 New Project → Deploy from GitHub → этот репозиторий. Variables — из `.env.example`. В @BotFather для Mini App укажи тот же `WEBAPP_URL`.

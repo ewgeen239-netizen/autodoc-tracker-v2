@@ -6,6 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
+const APP_VERSION = '20261013.1840';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -203,7 +204,23 @@ function step(k, state, note) {
   if (note) { const s = document.createElement('small'); s.textContent = note; li.appendChild(s); }
 }
 
+// Telegram кэширует файлы приложения. Если на сервере уже новая версия —
+// перезагружаемся с новой меткой ?v=, тогда браузер берёт свежие файлы.
+async function checkVersion() {
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return false;
+    const { v } = await r.json();
+    if (!v || v === APP_VERSION) return false;
+    if (sessionStorage.getItem('adx_reloaded') === v) return false;   // не уходим в цикл
+    sessionStorage.setItem('adx_reloaded', v);
+    location.replace(location.pathname + '?v=' + encodeURIComponent(v) + location.hash);
+    return true;
+  } catch { return false; }
+}
+
 async function boot() {
+  if (await checkVersion()) return;
   const t0 = Date.now();
   applyTheme();
 
@@ -262,7 +279,8 @@ async function boot() {
   $('app').hidden = false;
   renderVerify();
   renderAll();
-  const hashTab = location.hash.replace('#', '');
+  // Telegram дописывает к адресу свои параметры: #wallet&tgWebAppData=… — берём только вкладку
+  const hashTab = (location.hash.slice(1).split('&')[0] || '').split('=').length === 1 ? location.hash.slice(1).split('&')[0] : '';
   if (TABS.includes(hashTab) || RENDER[hashTab]) go(hashTab);
   if (!DB.consent || DB.consent.v !== CFG.CONSENT_VERSION) $('consent').hidden = false;
   else if (!DB.teamAt) onboard();                          // первый вход: сразу выбираем смену
