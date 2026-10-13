@@ -62,14 +62,15 @@ t('возраст и ulga', () => {
   assert.equal(C.youngStatus('', '2026-10').status, 'unknown');
 });
 
-t('кошелёк: до 15-го прошлый месяц, с 15-го — текущий', () => {
-  assert.equal(C.walletMonth(new Date(2026, 9, 13)), '2026-09');
-  assert.equal(C.walletMonth(new Date(2026, 9, 14, 23, 59)), '2026-09');
-  assert.equal(C.walletMonth(new Date(2026, 9, 15, 0, 1)), '2026-10');
+t('кошелёк: до 10-го прошлый месяц, с 10-го — текущий', () => {
+  assert.equal(C.walletMonth(new Date(2026, 9, 8)), '2026-09');
+  assert.equal(C.walletMonth(new Date(2026, 9, 9, 23, 59)), '2026-09');
+  assert.equal(C.walletMonth(new Date(2026, 9, 10, 0, 1)), '2026-10');
+  assert.equal(C.walletMonth(new Date(2026, 9, 13)), '2026-10');
   assert.equal(C.walletMonth(new Date(2026, 0, 3)), '2025-12');
-  assert.equal(C.walletUntil('2026-09'), '2026-10-15');
-  assert.equal(C.walletUntil('2026-12'), '2027-01-15');
-  assert.equal(C.daysLeft('2026-10-15', new Date(2026, 9, 13, 20)), 2);
+  assert.equal(C.walletUntil('2026-09'), '2026-10-10');
+  assert.equal(C.walletUntil('2026-12'), '2027-01-10');
+  assert.equal(C.daysLeft('2026-10-10', new Date(2026, 9, 8, 20)), 2);
 });
 
 t('смена-день: ночная смена — день начала', () => {

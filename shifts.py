@@ -22,7 +22,7 @@ import requests
 SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedule.json")
 DASHES = "–—-"
 SHIFT_CUT_H = 6                                     # учётные сутки начинаются в 06:00
-PAY_DAY = 15
+PAY_DAY = 10
 
 
 # ── время ────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ def gen_shifts(sched, uid, team, group, month, off=()):
 # ── оповещения ───────────────────────────────────────────────
 H12, H1 = 12 * 3600, 3600
 PEAKS_AFTER = (15 * 60, 3 * 3600)        # «запиши пики»: от 15 минут до 3 часов после конца
-PAY_HOURS = (10, 21)                     # 15-го числа — с 10:00 до 21:59
+PAY_HOURS = (10, 21)                     # 10-го числа — с 10:00 до 21:59
 
 DEFAULT_NOTIFY = {"h12": True, "h1": True, "peaks": True, "pay": True}
 
@@ -194,7 +194,7 @@ def left_text(seconds):
 
 
 def days_to_pay(at=None):
-    """Сколько дней до ближайшего 15-го и сама дата."""
+    """Сколько дней до ближайшего 10-го и сама дата."""
     d = (at or now()).date() if isinstance(at or now(), datetime) else at
     target = d.replace(day=PAY_DAY)
     if d.day > PAY_DAY:

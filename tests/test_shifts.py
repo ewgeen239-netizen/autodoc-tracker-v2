@@ -66,14 +66,15 @@ class Plan(unittest.TestCase):
         self.assertEqual(self.kinds(at(2026, 10, 14, 11), [dict(USER, active=False)]), [])
 
     def test_payday(self):
-        out = SH.plan([], [USER], at(2026, 10, 15, 10, 0))
+        out = SH.plan([], [USER], at(2026, 10, 10, 10, 0))
         self.assertEqual([(k, kind) for _, k, kind, _ in out], [("pay:2026-10", "pay")])
-        self.assertEqual(SH.plan([], [USER], at(2026, 10, 15, 8, 0)), [])
-        self.assertEqual(SH.plan([], [dict(USER, team=None)], at(2026, 10, 15, 12)), [])
+        self.assertEqual(SH.plan([], [USER], at(2026, 10, 10, 8, 0)), [])
+        self.assertEqual(SH.plan([], [USER], at(2026, 10, 15, 12, 0)), [])
+        self.assertEqual(SH.plan([], [dict(USER, team=None)], at(2026, 10, 10, 12)), [])
 
     def test_days_to_pay(self):
-        self.assertEqual(SH.days_to_pay(at(2026, 10, 13, 12))[0], 2)
-        self.assertEqual(str(SH.days_to_pay(at(2026, 10, 20, 12))[1]), "2026-11-15")
+        self.assertEqual(SH.days_to_pay(at(2026, 10, 8, 12))[0], 2)
+        self.assertEqual(str(SH.days_to_pay(at(2026, 10, 13, 12))[1]), "2026-11-10")
 
     def test_shift_day(self):
         self.assertEqual(str(SH.shift_day(at(2026, 10, 1, 2))), "2026-09-30")

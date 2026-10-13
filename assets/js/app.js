@@ -672,7 +672,7 @@ function renderNotify() {
   card.innerHTML = row('h12', 'За 12 часов до смены', 'чтобы спланировать день') +
     row('h1', 'За час до смены', 'время выходить к автобусу') +
     row('peaks', 'После смены', 'напомнить записать пики') +
-    row('pay', '15-го числа', 'кошелёк обновился, пора посчитать новый месяц') +
+    row('pay', '10-го числа', 'кошелёк обновился, пора посчитать новый месяц') +
     `<button class="btn btn-ghost btn-wide" style="margin-top:6px" data-act="ics">Добавить смены в календарь телефона</button>`;
 }
 
@@ -714,7 +714,7 @@ function renderBus() {
 }
 
 // ═════════════════════ КОШЕЛЁК ═════════════════════
-// Расчёт за месяц W виден до 15-го следующего месяца. Потом уходит в историю.
+// Расчёт за месяц W виден до 10-го следующего месяца. Потом уходит в историю.
 function walletRollover(now = new Date()) {
   const W = C.walletMonth(now), cur = DB.wallet.cur;
   if (cur && cur.month < W) {
@@ -779,7 +779,7 @@ function renderWallet(fresh = true) {
   renderWalletForm(v);
   renderBreakdown(v.res);
   $('wallet-hist').innerHTML = DB.wallet.hist.length ? DB.wallet.hist.map(h => `<div class="whist"><div><b>${mLabel(h.month)}</b><small>брутто ${money(h.brutto)} zł, премия ${money(h.bonus)} zł</small></div><div class="v">${money(h.netto)}<small>zł на руки</small></div></div>`).join('')
-    : `<div class="empty">Здесь появятся прошлые месяцы. Расчёт переходит сюда 15-го числа.</div>`;
+    : `<div class="empty">Здесь появятся прошлые месяцы. Расчёт переходит сюда 10-го числа.</div>`;
   if (bonusChanged) toast(`Премия обновлена: ${money(v.res.parts.bonus)} zł`);
 }
 
@@ -1060,7 +1060,7 @@ document.addEventListener('input', e => {
 });
 $('sheet-bg').addEventListener('click', e => { if (e.target.id === 'sheet-bg') closeSheet(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') back(); });
-// Вернулся в приложение — обновим «сегодня», премию и кошелёк (вдруг наступило 15-е)
+// Вернулся в приложение — обновим «сегодня», премию и кошелёк (вдруг наступило 10-е)
 document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('app').hidden) { pruneOldMonths(); walletRollover(); save(); renderAll(); flushToast(); } });
 
 document.addEventListener('DOMContentLoaded', boot);
