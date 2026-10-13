@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261013.1840';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261013.1853';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -948,7 +948,7 @@ function urlopBlock(W, i) {
   const ua = urlopAuto(W), uv = i.urlopVar ?? ua.perHour;
   const span = ua.months ? (ua.from === ua.to ? MONTHS[+ua.from.slice(5) - 1] : `${MONTHS[+ua.from.slice(5) - 1]}–${MONTHS[+ua.to.slice(5) - 1]}`) : '';
   const note = ua.months
-    ? `Среднее за ${span} (3 месяца по дате выплаты): премия, сверхурочные, ночные и Dodatek DARK делятся на отработанные часы — ${money(ua.perHour)} zł/ч${ua.est ? ', оценка по графику и архиву' : ''}.`
+    ? `Среднее за ${span} (3 месяца по дате выплаты): премия, сверхурочные, ночные${DB.team === 'dark' ? ' и Dodatek DARK' : ''} делятся на отработанные часы — ${money(ua.perHour)} zł/ч${ua.est ? ', оценка по графику и архиву' : ''}.`
     : 'Нет данных за прошлые месяцы. Впиши среднюю доплату из pasku или оставь 0.';
   const differs = ua.months && Math.abs(uv - ua.perHour) > 0.004;
   return `<div class="urlop-box">
