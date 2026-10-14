@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261013.1954';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261014.0000';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -542,7 +542,11 @@ async function homeRank() {
 }
 
 // ═════════════════════ ПИКИ ═════════════════════
-const qa = { mode: 'today' };
+// Состояние формы живёт здесь, а не в DOM: форма перерисовывается при каждом
+// входе на вкладку и возврате в приложение, и введённое не должно теряться.
+// f/o/p === null — поле не трогали, берём из графика.
+const qa = { mode: 'today', day: '', base: '', f: null, o: null, p: '' };
+const qaReset = () => { qa.f = qa.o = null; qa.p = ''; };
 function renderPeaks() {
   const st = STATE.curSt, cfg = C.ST[st];
   document.getElementById('p-peaks').style.setProperty('--stc', cfg.col);
@@ -571,9 +575,13 @@ function renderPeaks() {
 
 function renderForm() {
   const st = STATE.curSt;
+  // base — дата до автосдвига ночной смены; сдвиг всегда считаем от неё,
+  // иначе каждая перерисовка и каждый ввод уводили бы дату ещё на день назад.
   const day = qa.mode === 'yesterday' ? C.shiftYest() : qa.mode === 'today' ? C.shiftToday() : (qa.day || C.shiftToday());
-  qa.day = day;
+  qa.base = day;
+  if (qa.mode === 'custom') qa.day = day;
   const p = plan(day.slice(0, 7)), span = p && p.days[+day.slice(8)];
+  const f = qa.f ?? (span ? span.from : ''), o = qa.o ?? (span ? span.to : '');
   $('qa').innerHTML = `
     <div class="form-h">Записать смену на ${C.ST[st].name}</div>
     <div class="chips" style="margin-bottom:10px">
@@ -582,11 +590,11 @@ function renderForm() {
     </div>
     <label class="field" style="margin-bottom:10px"><span>Дата начала смены</span><input class="in" type="date" id="qa-d" value="${day}" data-in="qa"></label>
     <div class="grid2">
-      <label class="field"><span>Начало</span><input class="in" type="time" id="qa-f" value="${span ? span.from : ''}" data-in="qa"></label>
-      <label class="field"><span>Конец</span><input class="in" type="time" id="qa-o" value="${span ? span.to : ''}" data-in="qa"></label>
+      <label class="field"><span>Начало</span><input class="in" type="time" id="qa-f" value="${f}" data-in="qa"></label>
+      <label class="field"><span>Конец</span><input class="in" type="time" id="qa-o" value="${o}" data-in="qa"></label>
     </div>
     <div class="dur" id="qa-dur"></div>
-    <label class="field"><span>Пики, штук</span><input class="in" type="number" inputmode="numeric" min="1" max="100000" id="qa-p" placeholder="380" data-in="qa"></label>
+    <label class="field"><span>Пики, штук</span><input class="in" type="number" inputmode="numeric" min="1" max="100000" id="qa-p" value="${esc(qa.p)}" placeholder="380" data-in="qa"></label>
     <div class="preview" id="qa-prev" hidden></div>
     <button class="btn btn-acc btn-wide" id="qa-save" data-act="qa-save">Сохранить смену</button>`;
   qaUpdate();
@@ -594,8 +602,12 @@ function renderForm() {
 
 function qaUpdate(ev) {
   const f = $('qa-f').value, o = $('qa-o').value, d = $('qa-d');
-  if (ev && ev.target.id === 'qa-d') qa.mode = 'custom';
-  if (qa.mode !== 'custom' && f && o && d.value) { const fix = C.shiftDayOf(d.value, f, o); if (fix !== d.value) d.value = fix; }
+  const id = ev && ev.target.id;
+  if (id === 'qa-d') { qa.mode = 'custom'; qa.day = qa.base = d.value; document.querySelectorAll('[data-act="qa-mode"]').forEach(b => b.classList.remove('on')); }
+  if (id === 'qa-f') qa.f = f;
+  if (id === 'qa-o') qa.o = o;
+  if (id === 'qa-p') qa.p = $('qa-p').value;
+  if (qa.mode !== 'custom' && qa.base) { const fix = f && o ? C.shiftDayOf(qa.base, f, o) : qa.base; if (fix !== d.value) d.value = fix; }
   const min = C.minutesBetween(f, o), hrs = min / 60, p = Number($('qa-p').value);
   $('qa-dur').innerHTML = min ? `<span>Отработано</span><b>${Math.floor(min / 60)} ч ${String(min % 60).padStart(2, '0')} мин</b>` : '';
   const box = $('qa-prev');
@@ -614,7 +626,8 @@ function qaSave() {
   if (!RE_DAY.test(day)) return fail('Укажи дату');
   if (!min || min > 16 * 60) return fail('Проверь время смены');
   if (!(p > 0 && p <= 100000)) return fail('Укажи пики');
-  if (qa.mode !== 'custom') day = C.shiftDayOf(day, f, o);
+  if (qa.mode !== 'custom') day = C.shiftDayOf(qa.base || day, f, o);
+  qaReset();
   const now = new Date();
   DB.entries.push({ id: Date.now(), station: STATE.curSt, shiftDate: day, peaks: p, hours: Math.round(min / 60 * 100) / 100, from: f, to: o,
     addedAt: now.toTimeString().slice(0, 5) });
@@ -1174,7 +1187,7 @@ const ACT = {
     toast(`Смена ${teamMeta(DB.team).label} ${DB.group}: график и оповещения настроены`);
   },
   'station': el => { STATE.curSt = el.dataset.st; haptic.pick(); if (STATE.tab !== 'peaks') go('peaks'); else renderPeaks(); },
-  'qa-mode': el => { qa.mode = el.dataset.v; haptic.pick(); renderForm(); },
+  'qa-mode': el => { qa.mode = el.dataset.v; qa.f = qa.o = null; haptic.pick(); renderForm(); },
   'qa-save': () => qaSave(),
   'del-entry': el => confirmSheet('Удалить запись?', 'Премия за месяц пересчитается.', 'Удалить', () => {
     DB.entries = DB.entries.filter(e => e.id !== +el.dataset.id); save(); renderPeaks(); pushRank(); toast('Запись удалена'); }),
