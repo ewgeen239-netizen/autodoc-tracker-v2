@@ -1,6 +1,6 @@
 # AutoDoc Tracker v2
 
-Telegram Mini App и бот для склада AutoDoc M13 Outbound, Szczecin: пики и премия по таблицам OS, PA, SIO, PC, график смен DARK / ORANGE / GREEN по группам A–F, кошелёк с зарплатой на руки по польским ставкам 2026 года и оповещения в Telegram.
+Telegram Mini App и бот для склада AutoDoc M13 Outbound, Szczecin: пики и премия по таблицам OS, PA, SIO, PC, PLC, график смен DARK / ORANGE / GREEN по группам A–F, кошелёк с зарплатой на руки по польским ставкам 2026 года и оповещения в Telegram.
 
 Новая версия проекта [ewgeen239-netizen/test](https://github.com/ewgeen239-netizen/test): новый дизайн, исправленный расчёт зарплаты, рабочие оповещения, без игр.
 
