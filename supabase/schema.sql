@@ -7,7 +7,8 @@
 --    leaderboard, consents       — только Edge Function «api» (service_role),
 --                                  после проверки подписи Telegram;
 --    bot_users, shifts,
---    notify_log, ics_tokens      — бот и Edge Function (service_role).
+--    notify_log, ics_tokens      — бот и Edge Function (service_role);
+--    paydays                     — только Edge Function (даты зарплаты).
 --  Анон-ключ (он публичный, лежит в Mini App) может только читать
 --  рейтинг, и то без Telegram ID.
 -- ═══════════════════════════════════════════════════════════════════
@@ -115,6 +116,22 @@ create table if not exists public.ics_tokens (
 alter table public.ics_tokens enable row level security;
 
 
+-- 7. ДАТЫ ЗАРПЛАТЫ ──────────────────────────────────────────────────
+-- Когда пришла зарплата: только дата, без сумм. Из дат всех людей
+-- приложение строит прогноз следующей зарплаты. Читает и пишет только
+-- Edge Function (service role), наружу отдаются счётчики по датам.
+create table if not exists public.paydays (
+  uid        text        not null,
+  month      text        not null,              -- месяц работы 'YYYY-MM'
+  kind       text        not null default 'main',  -- main | kor
+  paid_on    date        not null,
+  updated_at timestamptz default now(),
+  primary key (uid, month, kind)
+);
+create index if not exists paydays_month_idx on public.paydays (month);
+alter table public.paydays enable row level security;
+
+
 -- 6b. Смена в рейтинге для тех, кто уже выбрал её в боте или приложении
 update public.leaderboard l set team = b.team, grp = b.grp
 from public.bot_users b
@@ -137,5 +154,5 @@ select c.relname as table_name, c.relrowsecurity as rls_on,
        (select count(*) from pg_policies p where p.schemaname = 'public' and p.tablename = c.relname) as policies
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public'
-  and c.relname in ('leaderboard', 'consents', 'bot_users', 'shifts', 'notify_log', 'ics_tokens')
+  and c.relname in ('leaderboard', 'consents', 'bot_users', 'shifts', 'notify_log', 'ics_tokens', 'paydays')
 order by c.relname;

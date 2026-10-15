@@ -19,6 +19,24 @@
            tr: [[0,225,0],[226,250,.04],[251,267,.06],[268,283,.08],[284,313,.09],[314,342,.10],[343,394,.121],[395,999,.141]] },
     plc: { name: 'PLC', full: 'Placement Consol', norm: 180, maxP: 317, col: '#3DBE7A',
            tr: [[0,180,0],[181,200,.04],[201,214,.06],[215,227,.08],[228,250,.10],[251,274,.12],[275,316,.16],[317,999,.18]] },
+    // Дополнительные станции (Regulamin § 6, пункты f, j, k, m, o, r, s). extra — по
+    // умолчанию под кнопкой «Дополнительно»; свои 3–5 станций человек выбирает сам.
+    // hourly — ставка не за штуку, а за час:
+    // премия = часы × ставка ступени (Załadunek, Aneks 2/2026 с 01.06.2026).
+    pi:  { name: 'PI',  full: 'Picking Inventory',  norm: 160, maxP: 282, col: '#2EC4B6', extra: true,
+           tr: [[0,160,0],[161,178,.08],[179,189,.10],[190,202,.12],[203,222,.14],[223,243,.16],[244,281,.19],[282,999,.21]] },
+    op:  { name: 'OP',  full: 'Oversize Placement', norm: 144, maxP: 253, col: '#E85D75', extra: true,
+           tr: [[0,144,0],[145,160,.07],[161,170,.08],[171,181,.11],[182,200,.13],[201,218,.15],[219,252,.17],[253,999,.19]] },
+    hr:  { name: 'HR',  full: 'Direct Receive HR',  norm: 140, maxP: 256, col: '#7FB241', extra: true,
+           tr: [[0,140,0],[141,158,.03],[159,176,.061],[177,190,.076],[191,205,.096],[206,230,.11],[231,255,.132],[256,999,.146]] },
+    dp:  { name: 'DP',  full: 'Disassembly Pallet', norm: 165, maxP: 290, col: '#5BB8F2', extra: true,
+           tr: [[0,165,0],[166,183,.03],[184,196,.05],[197,208,.07],[209,229,.09],[230,251,.11],[252,289,.13],[290,999,.15]] },
+    rod: { name: 'ROD', full: 'Receiving On Demand', norm: 165, maxP: 290, col: '#F29BC9', extra: true,
+           tr: [[0,165,0],[166,183,.07],[184,196,.09],[197,208,.11],[209,229,.13],[230,250,.15],[251,289,.17],[290,999,.19]] },
+    pod: { name: 'POD', full: 'Putwall On Demand', norm: 212, maxP: 372, col: '#A3D977', extra: true,
+           tr: [[0,212,0],[213,235,.03],[236,251,.05],[252,267,.07],[268,295,.08],[296,322,.09],[323,371,.11],[372,999,.12]] },
+    zk:  { name: 'ZK',  full: 'Załadunek kontenerów', norm: 100, maxP: 161, col: '#C98B5A', extra: true, hourly: true,
+           tr: [[0,100,0],[101,110,8.92],[111,115,11.90],[116,130,13.69],[131,145,16.07],[146,160,17.85],[161,999,20.83]] },
   };
 
   const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -30,12 +48,13 @@
   }
 
   // Премия по одной записи (для предпросмотра). Ставка — по округлённому темпу.
+  // У почасовых станций премия = часы × ставка, штуки сверх нормы только для справки.
   function calc(st, peaks, hours) {
     const pph = hours > 0 ? peaks / hours : 0;
     const norm = Math.round(ST[st].norm * hours);
     const above = Math.max(0, peaks - norm);
     const rate = rateFor(st, Math.round(pph));
-    return { pph, norm, above, rate, bonus: above * rate };
+    return { pph, norm, above, rate, bonus: ST[st].hourly ? hours * rate : above * rate };
   }
 
   // Премия за месяц считается агрегатом: все пики и часы станции за месяц →
@@ -308,8 +327,178 @@
     return Math.max(0, Math.ceil((new Date(y, m - 1, d) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5));
   }
 
+  // ── проверка odcinka ──────────────────────────────────────────────
+  // slips — все odcinki одного месяца работы (główna + korekty), разобранные
+  // slip.js: { kind, f: {brutto, zus, health, …}, ovt, other }.
+  // ctx: { young: true|false|null, team, rate, tracker: { bonus, bonusBase, pf,
+  //        hours, urlopHours, netto, has } } — что насчитал сам трекер.
+  // Возвращает пункты проверки (ok | info | warn | bad) и общий итог.
+  const near = (a, b, tol = .02) => Math.abs(a - b) <= tol + 1e-9;
+  const isHoursLabel = l => /^ilo[sś][cć]/i.test(l);
+  function slipTaxes(s, ctx, pre) {
+    const f = s.f, out = [], add = (level, title, text) => out.push({ level, title: pre + title, text });
+    const brutto = f.brutto || 0, zusBase = f.zusBase ?? brutto;
+    // ZUS работника: 9,76% + 1,5% + 2,45% от podstawy ZUS, каждая часть округляется
+    if (f.zus !== undefined) {
+      const exp = r2(r2(zusBase * TAX.ZUS.em) + r2(zusBase * TAX.ZUS.rent) + r2(zusBase * TAX.ZUS.chor));
+      near(f.zus, exp, .03) ? add('ok', 'ZUS 13,71%', `${fmt(f.zus)} zł с ${fmt(zusBase)} zł — верно`)
+        : add('bad', 'ZUS 13,71%', `удержано ${fmt(f.zus)} zł, по ставкам должно быть ${fmt(exp)} zł`);
+    }
+    const zus = f.zus || 0;
+    if (f.health !== undefined) {
+      const hb = f.healthBase ?? r2(zusBase - zus), exp = r2(hb * TAX.HEALTH);
+      near(f.health, exp, .03) ? add('ok', 'Składka zdrowotna 9%', `${fmt(f.health)} zł с ${fmt(hb)} zł — верно`)
+        : add('bad', 'Składka zdrowotna 9%', `удержано ${fmt(f.health)} zł, должно быть ${fmt(exp)} zł`);
+    }
+    // PIT на odcinku может не печататься (при uldze его нет) — выводим из остатка
+    const known = r2(brutto - zus - (f.health || 0) - (f.benefit || 0) - (f.ppk || 0) + (f.ekw || 0));
+    const pit = f.pit !== undefined ? f.pit : r2(known - (f.netto || 0));
+    if (f.pit !== undefined) {
+      const exp = r2(known - f.pit);
+      near(f.netto, exp, .03) ? add('ok', 'Арифметика «на руки»', `брутто − ZUS − здоровье − PIT − удержания + эквиваленты = ${fmt(f.netto)} zł`)
+        : add('bad', 'Арифметика «на руки»', `по строкам odcinka выходит ${fmt(exp)} zł, а к выплате ${fmt(f.netto)} zł`);
+    } else if (Math.abs(pit - Math.round(pit)) > .02) {
+      add('warn', 'Удержание без названия', `из «на руки» ушло ещё ${fmt(pit)} zł, которых нет в строках odcinka. Спроси в kadrach, что это.`);
+    }
+    const pitR = Math.round(pit);
+    const pct = (f.pitPct || TAX.PIT * 100) / 100;
+    const pb = f.pitBase || 0;
+    if (pitR <= 0) {
+      ctx.young === false ? add('warn', 'PIT не удержан', 'Так бывает при uldze dla młodych (до 26 лет). Тебе 26+ — уточни в kadrach, иначе налог доплатишь в PIT-37.')
+        : add(ctx.young ? 'ok' : 'info', 'PIT 0 zł', 'ulga dla młodych: доход до 26 лет без налога (до 85 528 zł в год)');
+    } else if (pb) {
+      const with2 = Math.max(0, Math.round(pb * pct - TAX.PIT_REDUCE)), without = Math.round(pb * pct);
+      if (Math.abs(pitR - with2) <= 1) add('ok', 'PIT', `${fmt(pitR)} zł = ${Math.round(pct * 100)}% от ${fmt(pb)} − 300 (PIT-2 учтён)`);
+      else if (Math.abs(pitR - without) <= 1) add('warn', 'PIT без PIT-2', `${fmt(pitR)} zł = ${Math.round(pct * 100)}% от ${fmt(pb)} без вычета 300 zł. Подай PIT-2 в kadry — будешь получать на 300 zł больше в месяц.`);
+      else if (ctx.young) add('bad', 'PIT удержан', `${fmt(pitR)} zł, хотя по возрасту положена ulga dla młodych. Проверь дату рождения в kadrach.`);
+      else add('warn', 'PIT', `${fmt(pitR)} zł не сходится с ${Math.round(pct * 100)}% от ${fmt(pb)} − 300 (${fmt(with2)} zł)`);
+    }
+    return { items: out, pit: Math.max(0, pitR) };
+  }
+
+  function slipCheck(slips, ctx = {}) {
+    const items = [], add = (level, title, text) => items.push({ level, title, text });
+    const main = slips.find(s => s.kind === 'main') || slips[0];
+    const f = (main && main.f) || {};
+    const mk = main && main.month, y = mk ? +mk.slice(0, 4) : 2026;
+    const rate = f.rate || 0;
+    if (f.hours !== undefined && rate && f.base !== undefined) {
+      const exp = r2(f.hours * rate);
+      near(f.base, exp) ? add('ok', 'Основные часы', `${fmt(f.hours)} ч × ${fmt(rate)} zł = ${fmt(f.base)} zł`)
+        : add('bad', 'Основные часы', `${fmt(f.hours)} ч × ${fmt(rate)} zł = ${fmt(exp)} zł, а начислено ${fmt(f.base)} zł`);
+    }
+    if (f.nightHours && f.night !== undefined && mk) {
+      const nom = nominalHours(mk), exp = r2(f.nightHours * TAX.NIGHT * minWage(y) / nom), own = r2(f.nightHours * TAX.NIGHT * rate);
+      if (f.night + .05 >= exp) add('ok', 'Ночная доплата 20%', `${fmt(f.nightHours)} ч × ${fmt(r2(TAX.NIGHT * minWage(y) / nom))} zł = ${fmt(f.night)} zł${near(f.night, own, .05) && !near(own, exp, .05) ? ' (от твоей ставки)' : ''}`);
+      else add('bad', 'Ночная доплата 20%', `за ${fmt(f.nightHours)} ч положено ${fmt(exp)} zł (20% от минимальной часовой), начислено ${fmt(f.night)} zł`);
+    }
+    for (const [pct, o] of Object.entries((main && main.ovt) || {})) {
+      if (!o.hours || o.amount === undefined || !rate) continue;
+      const exp = r2(o.hours * rate * (pct === '50' ? 1.5 : 2));
+      o.amount + .02 >= exp ? add('ok', `Сверхурочные +${pct}%`, `${fmt(o.hours)} ч × ${fmt(rate)} × ${pct === '50' ? '1,5' : '2'} = ${fmt(o.amount)} zł`)
+        : add('bad', `Сверхурочные +${pct}%`, `за ${fmt(o.hours)} ч положено ${fmt(exp)} zł, начислено ${fmt(o.amount)} zł`);
+    }
+    if (f.urlopHours && f.urlop !== undefined) {
+      const ph = r2(f.urlop / f.urlopHours);
+      ph + .01 >= rate ? add('ok', 'Отпуск', `${fmt(f.urlopHours)} ч по ${fmt(ph)} zł: ставка ${fmt(rate)} + ${fmt(r2(ph - rate))} средних доплат`)
+        : add('bad', 'Отпуск', `час отпуска ${fmt(ph)} zł — меньше ставки ${fmt(rate)} zł`);
+    }
+    // Брутто = сумма начислений. Незнакомые статьи (siła wyższa, chorobowe) тоже деньги.
+    if (main && f.brutto !== undefined) {
+      const money = ['base', 'bonus', 'night', 'dark', 'urlop'].reduce((s, k) => s + (f[k] || 0), 0)
+        + (f.ovtTotal ?? Object.values(main.ovt || {}).reduce((s, o) => s + (o.amount || 0), 0))
+        + main.other.filter(o => !isHoursLabel(o.label)).reduce((s, o) => s + o.value, 0);
+      const extra = main.other.filter(o => !isHoursLabel(o.label)).map(o => o.label);
+      if (!near(r2(money), f.brutto, .05)) add('warn', 'Брутто', `статьи дают ${fmt(r2(money))} zł, а брутто ${fmt(f.brutto)} zł — в odcinku есть строки, которые трекер не узнал`);
+      else if (extra.length) add('info', 'Другие начисления', extra.join(', '));
+    }
+    let pitTotal = 0;
+    slips.forEach(s => { const r = slipTaxes(s, ctx, s.kind === 'kor' ? 'Korekta: ' : ''); items.push(...r.items); pitTotal += r.pit; });
+
+    // сравнение с тем, что насчитал трекер
+    const sum = k => r2(slips.reduce((s, x) => s + (x.f[k] || 0), 0));
+    const bonus = sum('bonus'), netto = sum('netto'), brutto = sum('brutto');
+    const t = ctx.tracker || {};
+    if (t.bonusBase > 0) {
+      const diff = r2(bonus - t.bonus), tol = Math.max(1, t.bonus * .005);
+      if (diff >= -tol) add('ok', 'Премия за пики', `${fmt(bonus)} zł, трекер насчитал ${fmt(t.bonus)} zł (${fmt(t.bonusBase)} × ${String(t.pf).replace('.', ',')})${diff > tol ? `, выплатили на ${fmt(diff)} zł больше` : ''}`);
+      else add('bad', 'Премия недоплачена', `в odcinku ${fmt(bonus)} zł, по твоим пикам ${fmt(t.bonus)} zł (${fmt(t.bonusBase)} × ${String(t.pf).replace('.', ',')}). Не хватает ${fmt(-diff)} zł — спроси у лидера или жди korektę.`);
+    } else if (bonus) add('info', 'Премия за пики', `${fmt(bonus)} zł. В трекере нет пиков за этот месяц — сравнить не с чем.`);
+    if (t.has && f.hours !== undefined) {
+      const sh = r2((f.hours || 0) + (f.urlopHours || 0)), th = r2((t.hours || 0) + (t.urlopHours || 0));
+      Math.abs(sh - th) <= 1 ? add('ok', 'Часы по графику', `${fmt(sh)} ч, как в графике трекера`)
+        : add('warn', 'Часы по графику', `в odcinku ${fmt(sh)} ч (работа + отпуск), по графику трекера ${fmt(th)} ч. Проверь отметки отпуска и пропусков в календаре.`);
+    }
+    if (ctx.team === 'dark' && main && main.kind === 'main') {
+      if (!f.dark) add('warn', 'Dodatek DARK', 'в odcinku его нет. Если весь месяц ты в ночной смене — спроси в kadrach.');
+      else if (f.dark < 300) add('info', 'Dodatek DARK', `${fmt(f.dark)} из 300 zł — так бывает за неполный месяц смен`);
+    }
+    if (t.netto > 0) add('info', 'Кошелёк трекера', `насчитал ${fmt(t.netto)} zł на руки, по odcinku ${fmt(netto)} zł (${netto >= t.netto ? '+' : '−'}${fmt(Math.abs(r2(netto - t.netto)))})`);
+
+    const level = items.some(i => i.level === 'bad') ? 'bad' : items.some(i => i.level === 'warn') ? 'warn' : 'ok';
+    // что можно перенести в настройки кошелька
+    const profile = {};
+    if (rate) profile.rate = rate;
+    if (f.ekw !== undefined) profile.ekw = f.ekw;
+    profile.deduct = f.benefit || 0;
+    profile.ppk = !!f.ppk;
+    if (pitTotal === 0 && (f.pitBase || 0) > 0) profile.youngLikely = true;
+    else if (f.pitBase && f.zusBase !== undefined) {
+      const kup = Math.round((f.zusBase - (f.zus || 0)) - f.pitBase);
+      if (Math.abs(kup - 250) <= 1) profile.kup = 'local'; else if (Math.abs(kup - 300) <= 1) profile.kup = 'commute';
+    }
+    return { level, items, netto, brutto, bonus, pit: pitTotal, profile };
+  }
+  const fmt = n => (Number(n) || 0).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+  // ── дата зарплаты ────────────────────────────────────────────────
+  // Зарплату за месяц W платят до 10-го числа месяца W+1. Выпадает 10-е на
+  // выходной или праздник — платят в последний рабочий день перед ним. Если
+  // накануне тоже рабочий день и это не раньше 8-го, деньги чаще приходят
+  // накануне: 80% — за день до срока, 100% — в срок. Так говорит опыт людей;
+  // reports (даты от всех, кто отметил, когда пришли деньги) уточняют правило.
+  const isWorkday = day => { const [y, m, d] = day.split('-').map(Number), w = new Date(y, m - 1, d).getDay(); return w > 0 && w < 6 && !plHolidays(y).has(day); };
+  const prevWorkday = day => { let d = addDays(day, -1); while (!isWorkday(d)) d = addDays(d, -1); return d; };
+  const workdaysBetween = (a, b) => { let n = 0, d = a; while (d < b) { d = addDays(d, 1); if (isWorkday(d)) n++; } return n; };
+  function payDeadline(W) {
+    let D = `${addMonths(W, 1)}-${pad(PAY_DAY)}`;
+    while (!isWorkday(D)) D = addDays(D, -1);
+    return D;
+  }
+  const payPrior = D => { const p = prevWorkday(D); return +p.slice(8) >= 8 ? { 1: .8, 0: .2 } : { 0: 1 }; };
+  // reports: { 'YYYY-MM' (месяц работы): { 'YYYY-MM-DD': сколько человек } }
+  function payday(W, reports = {}) {
+    const D = payDeadline(W);
+    const got = reports[W] || {};
+    const top = Object.entries(got).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+    // опыт прошлых месяцев: на сколько рабочих дней раньше срока пришли деньги
+    const seen = {}; let months = 0;
+    for (const [m, days] of Object.entries(reports)) {
+      if (m === W) continue;
+      const best = Object.entries(days).sort((a, b) => b[1] - a[1])[0];
+      if (!best) continue;
+      const Dm = payDeadline(m);
+      if (best[0] > Dm) continue;                         // отметили позже срока — это не день прихода
+      const k = workdaysBetween(best[0], Dm);
+      if (k > 3) continue;
+      seen[k] = (seen[k] || 0) + 1; months++;
+    }
+    const prior = payPrior(D), W0 = 2, dist = {};
+    new Set([...Object.keys(prior), ...Object.keys(seen)]).forEach(k => { dist[k] = (W0 * (prior[k] || 0) + (seen[k] || 0)) / (W0 + months); });
+    let cum = 0;
+    const days = Object.keys(dist).map(Number).sort((a, b) => b - a).map(k => {
+      let d = D; for (let i = 0; i < k; i++) d = prevWorkday(d);
+      return { day: d, p: dist[k] };
+    }).filter(x => x.day.slice(0, 7) === addMonths(W, 1) && x.p >= .05)
+      .map(x => { cum += x.p; return { day: x.day, p: Math.min(1, Math.round(cum * 100) / 100) }; });
+    if (days.length) days[days.length - 1].p = 1;
+    return { month: W, deadline: D, days, src: months ? 'data' : 'rule', months,
+             actual: top ? top[0] : null, actualN: top ? top[1] : 0 };
+  }
+
   const Core = {
     ST, r2, rateFor, calc, monthAgg, monthBonus, monthSnapshot,
+    slipCheck, isWorkday, payDeadline, payday,
     iso, monthKey, addDays, addMonths, hmMin, daysInMonth,
     SHIFT_CUT_H, shiftDayFrom, shiftToday, shiftYest, shiftBounds, shiftDayOf, minutesBetween, nightMinutes,
     parseSpan, monthPlan, easter, plHolidays, nominalHours,

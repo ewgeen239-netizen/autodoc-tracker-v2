@@ -78,4 +78,30 @@ await t('частые запросы — 429', async () => {
   await post({ initData: d, action: 'consent' });
   assert.equal((await post({ initData: d, action: 'consent' })).status, 429);
 });
+await t('payday: дата зарплаты пишется с доверенным uid, мусор — 400', async () => {
+  const now = new Date(), W = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+  const day = now.toISOString().slice(0, 10);
+  assert.equal((await post({ initData: initData({ ...me, id: 783 }), action: 'payday', month: W, paid_on: '2020-01-01' })).status, 400);
+  assert.equal((await post({ initData: initData({ ...me, id: 784 }), action: 'payday', month: W, paid_on: '2026-02-31' })).status, 400);
+  calls.length = 0;
+  const r = await post({ initData: initData({ ...me, id: 785 }), action: 'payday', month: W, paid_on: day, uid: '1' });
+  assert.equal(r.status, 200);
+  const w = calls.find(c => c.url.includes('/paydays'));
+  assert.equal(w.body.uid, '785'); assert.equal(w.body.paid_on, day); assert.equal(w.body.kind, 'main');
+  calls.length = 0;
+  assert.equal((await post({ initData: initData({ ...me, id: 786 }), action: 'payday', month: W, paid_on: '' })).status, 200);
+  assert.equal(calls.find(c => c.url.includes('/paydays')).method, 'DELETE');
+});
+await t('paydays: наружу только счётчики по датам', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async url => new Response(JSON.stringify(String(url).includes('/paydays')
+    ? [{ month: '2026-09', paid_on: '2026-10-09' }, { month: '2026-09', paid_on: '2026-10-09' }, { month: '2026-09', paid_on: '2026-10-08' }] : []), { status: 200 });
+  try {
+    const r = await post({ initData: initData({ ...me, id: 787 }), action: 'paydays' });
+    const j = await r.json();
+    assert.equal(r.status, 200);
+    assert.deepEqual(j.reports, { '2026-09': { '2026-10-09': 2, '2026-10-08': 1 } });
+    assert.ok(!JSON.stringify(j).includes('uid'));
+  } finally { globalThis.fetch = real; }
+});
 console.log(`\n${n} проверок пройдено`);

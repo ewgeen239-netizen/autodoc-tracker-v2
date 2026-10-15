@@ -11,6 +11,8 @@
 //   consent  — фиксация согласия
 //   profile  — смена/группа и какие оповещения слать (бот пересоберёт смены)
 //   ics      — личная ссылка на календарь
+//   payday   — когда пришла зарплата за месяц (только дата, без сумм)
+//   paydays  — сколько человек отметили какую дату: из этого прогноз зарплаты
 // GET ?ics=<token> — лента смен для календаря телефона.
 //
 // Deploy:  supabase functions deploy api --no-verify-jwt
@@ -254,6 +256,16 @@ function monthOk(m: string): boolean {
   return mo >= 1 && mo <= 12 && idx <= cur + 1 && idx >= cur - 24;
 }
 
+// Зарплату за месяц W платят в начале W+1. Принимаем даты с 20-го числа W
+// до конца W+2 (korekty приходят позже) и не из будущего.
+function payDayOk(month: string, day: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const [y, m] = month.split("-").map(Number);
+  const t = Date.parse(day + "T00:00:00Z");
+  if (!Number.isFinite(t) || new Date(t).toISOString().slice(0, 10) !== day) return false;
+  return t >= Date.UTC(y, m - 1, 20) && t < Date.UTC(y, m + 2, 1) && t <= Date.now() + 864e5;
+}
+
 Deno.serve(async (req) => {
   const C = cors(req);
   const json = (obj: unknown, status = 200) =>
@@ -365,6 +377,37 @@ Deno.serve(async (req) => {
           if (!w.ok) return json({ error: "db" }, 500);
         }
         return json({ ok: true, url: `${PROJECT_URL}/functions/v1/api?ics=${token}` });
+      }
+
+      case "payday": {
+        // month — месяц работы, paid_on — день, когда деньги пришли на счёт.
+        // Пустая дата — отметку снять.
+        const month = String(body.month ?? "");
+        const kind = body.kind === "kor" ? "kor" : "main";
+        const paid = String(body.paid_on ?? "");
+        if (!monthOk(month)) return json({ error: "bad month" }, 400);
+        const key = `uid=eq.${uid}&month=eq.${month}&kind=eq.${kind}`;
+        if (!paid) {
+          const d = await db(`paydays?${key}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+          return d.ok ? json({ ok: true }) : json({ error: "db" }, 500);
+        }
+        if (!payDayOk(month, paid)) return json({ error: "bad date" }, 400);
+        const row = { uid, month, kind, paid_on: paid, updated_at: new Date().toISOString() };
+        const res = await db("paydays", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(row) });
+        return res.ok ? json({ ok: true }) : json({ error: "db" }, 500);
+      }
+
+      case "paydays": {
+        // Только счётчики по датам: кто именно отметил, наружу не уходит.
+        const now = new Date(), since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 14, 1)).toISOString().slice(0, 7);
+        const r = await db(`paydays?kind=eq.main&month=gte.${since}&select=month,paid_on&limit=20000`);
+        if (!r.ok) return json({ error: "db" }, 500);
+        const reports: Record<string, Record<string, number>> = {};
+        for (const x of (await r.json()) as { month: string; paid_on: string }[]) {
+          const m = (reports[x.month] ??= {});
+          m[x.paid_on] = (m[x.paid_on] ?? 0) + 1;
+        }
+        return json({ ok: true, reports });
       }
 
       default:

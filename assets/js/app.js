@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261014.0401';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261015.1849';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -42,11 +42,18 @@ const RE_DAY = /^\d{4}-\d{2}-\d{2}$/, RE_MK = /^\d{4}-\d{2}$/, RE_HM = /^\d{2}:\
 const fin = (v, lo, hi, d = 0) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 const str = (v, max) => String(v ?? '').slice(0, max);
 
+// Свои станции на вкладке «Пики»: 3–5 штук, остальные — под «Дополнительно».
+const MAIN_ST = ['os', 'pa', 'sio', 'pc', 'plc'], MAIN_MIN = 3, MAIN_MAX = 5;
+function cleanMain(v) {
+  const a = [...new Set((Array.isArray(v) ? v : []).filter(k => C.ST[k]))].slice(0, MAIN_MAX);
+  return a.length >= MAIN_MIN ? a : MAIN_ST.slice();
+}
+
 function defaults() {
   return {
     v: 2, uid: '', name: '', emoji: '👷', photo: '', team: 'dark', group: 'A', teamAt: 0,
-    ws: 'mon', theme: 'auto', consent: null,
-    entries: [], archive: {}, notes: [], urlop: {}, absent: {}, ovt: [],
+    ws: 'mon', theme: 'auto', consent: null, mainSt: MAIN_ST.slice(),
+    entries: [], archive: {}, notes: [], urlop: {}, absent: {}, ovt: [], slips: [],
     profile: { birth: '', birthOk: false, rateMode: '33.00', rate: 33.00, kup: 'local', pit2: true, ppk: false, nightBasis: 'min', extra: 0,
       dark: 300, ekw: 22.95, deduct: 0 },
     wallet: { cur: null, draft: null, hist: [] },
@@ -65,6 +72,7 @@ function sanitize(raw) {
   d.group = /^[A-F]$/.test(raw.group) ? raw.group : 'A';
   d.teamAt = fin(raw.teamAt, 0, 9e15);
   d.ws = raw.ws === 'sun' ? 'sun' : 'mon';
+  d.mainSt = cleanMain(raw.mainSt);
   d.theme = ['auto', 'dark', 'light'].includes(raw.theme) ? raw.theme : 'auto';
   d.consent = raw.consent && typeof raw.consent.v === 'string' ? { v: str(raw.consent.v, 10), at: str(raw.consent.at, 40) } : null;
   d.entries = (Array.isArray(raw.entries) ? raw.entries : []).filter(e => e && C.ST[e.station] && RE_DAY.test(e.shiftDate)).slice(-2000).map(e => ({
@@ -82,6 +90,7 @@ function sanitize(raw) {
   d.ovt = (Array.isArray(raw.ovt) ? raw.ovt : []).filter(o => o && RE_DAY.test(o.date)).slice(-500).map(o => ({
     id: fin(o.id, 0, 9e15, Date.now()), date: o.date, hours: fin(o.hours, 0, 16), pct: o.pct === 50 ? 50 : 100, night: !!o.night,
   })).filter(o => o.hours > 0);
+  d.slips = (Array.isArray(raw.slips) ? raw.slips : []).map(cleanSlip).filter(Boolean).slice(-36);
   const p = raw.profile || {};
   d.profile = {
     birth: RE_DAY.test(p.birth) ? p.birth : '', birthOk: !!p.birthOk && RE_DAY.test(p.birth),
@@ -104,11 +113,29 @@ function sanitize(raw) {
   d.wallet.hist = (Array.isArray(w.hist) ? w.hist : []).filter(h => h && RE_MK.test(h.month)).slice(-36).map(h => ({
     month: h.month, netto: fin(h.netto, 0, 1e6), brutto: fin(h.brutto, 0, 1e6), bonus: fin(h.bonus, 0, 1e6), savedAt: str(h.savedAt, 40),
     ...(Number.isFinite(+h.var) && +h.hours > 0 ? { var: fin(h.var, 0, 1e5), hours: fin(h.hours, 0, 744) } : {}),
+    ...(h.slip ? { slip: true } : {}),
+    ...(h.calc && Number.isFinite(+h.calc.netto) ? { calc: { netto: fin(h.calc.netto, 0, 1e6), brutto: fin(h.calc.brutto, 0, 1e6), bonus: fin(h.calc.bonus, 0, 1e6) } } : {}),
   }));
   if (Number.isFinite(+w.lastBonus)) d.wallet.lastBonus = fin(w.lastBonus, 0, 1e6);
   const nt = raw.notify || {};
   d.notify = { h2: (nt.h2 ?? nt.h12) !== false, h1: nt.h1 !== false, peaks: nt.peaks !== false, pay: nt.pay !== false };
   return d;
+}
+
+// Разобранный odcinek: только известные поля и числа (см. slip.js).
+const SLIP_F = ['rate', 'hours', 'base', 'bonus', 'nightHours', 'night', 'dark', 'urlopHours', 'urlop', 'ovtTotal', 'brutto', 'zusBase',
+  'zus', 'zusEm', 'zusRent', 'zusChor', 'pitBase', 'pitPct', 'healthBase', 'health', 'pit', 'benefit', 'ekw', 'ppk', 'transfer', 'netto'];
+const numOr = (v, lo, hi) => v !== null && v !== '' && v !== undefined && Number.isFinite(+v) ? fin(v, lo, hi) : undefined;
+function cleanSlip(s) {
+  if (!s || !RE_MK.test(s.month)) return null;
+  const f = {}; SLIP_F.forEach(k => { const v = numOr(s.f?.[k], -1e6, 1e6); if (v !== undefined) f[k] = v; });
+  if (f.netto === undefined || f.brutto === undefined) return null;
+  const ovt = {};
+  [50, 100].forEach(p => { const o = s.ovt?.[p]; if (o && typeof o === 'object') ovt[p] = { hours: numOr(o.hours, 0, 744), amount: numOr(o.amount, 0, 1e6) }; });
+  return { id: str(s.id, 40) || `${s.month}#${s.kind}`, month: s.month, list: str(s.list, 30), listName: str(s.listName, 40), kind: s.kind === 'kor' ? 'kor' : 'main',
+    payDate: RE_DAY.test(s.payDate) ? s.payDate : '', gotOn: RE_DAY.test(s.gotOn) ? s.gotOn : '', f, ovt,
+    other: (Array.isArray(s.other) ? s.other : []).slice(0, 20).map(o => ({ label: str(o && o.label, 40), value: fin(o && o.value, -1e6, 1e6) })).filter(o => o.label),
+    at: str(s.at, 40) };
 }
 
 // Перенос из прежней версии трекера (ключ ad_db).
@@ -160,7 +187,7 @@ async function cloudRestore() {
 }
 
 // ═════════════════════ СЕТЬ ═════════════════════
-const STATE = { verified: false, uid: '', server: false, sched: null, tab: 'home', stack: [], curSt: 'os', calY: 0, calM: 0, rankMonth: null, schedTab: 'cal' };
+const STATE = { verified: false, uid: '', server: false, sched: null, tab: 'home', stack: [], curSt: 'os', calY: 0, calM: 0, rankMonth: null, schedTab: 'cal', paydays: null, paydaysAt: 0, slipView: null, slipErr: '' };
 
 async function api(action, payload = {}, timeout = 9000) {
   if (!IN_TG) throw new Error('no-tg');
@@ -290,6 +317,7 @@ async function boot() {
     if (!sp || sp.team !== DB.team || sp.grp !== DB.group) pushProfile();
   }
   if (tgv('6.1')) TG.BackButton.onClick(back);
+  loadPaydays();
   flushToast();
 }
 // Первый вход: без смены и группы не стартуем — от них зависят график,
@@ -405,12 +433,6 @@ function countUp(el, to, fmt = money) {
   requestAnimationFrame(tick);
 }
 
-function barcode(el, code) {
-  let h = '', seed = 0; for (const ch of code) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
-  for (let i = 0; i < 46; i++) { seed = (seed * 1103515245 + 12345) >>> 0; const w = 1 + (seed >> 16) % 3; h += `<i style="width:${w}px"></i>`; }
-  el.innerHTML = h;
-}
-
 function sheet(html, onOpen) {
   $('sheet-body').innerHTML = html; const bg = $('sheet-bg'); bg.hidden = false; bg.classList.remove('closing');
   onOpen && onOpen($('sheet-body'));
@@ -475,7 +497,7 @@ function renderHome() {
   const code = `M13-${teamMeta(DB.team).label}-${DB.group}-${m}${y.slice(2)}`;
   $('plate-code').textContent = code;
   $('plate-month').textContent = mLabel(mk);
-  barcode($('plate-bar'), code);
+  renderPlateCheck();
   const base = C.monthBonus(DB.entries, mk), absN = autoHours(mk).absences, pf = C.premiumFactor(absN);
   // На главной премия сразу с множителем обецности: без пропусков ×1,25.
   countUp($('plate-bonus'), C.r2(base * pf));
@@ -547,10 +569,29 @@ async function homeRank() {
 // f/o/p === null — поле не трогали, берём из графика.
 const qa = { mode: 'today', day: '', base: '', f: null, o: null, p: '' };
 const qaReset = () => { qa.f = qa.o = null; qa.p = ''; };
+// Ставка ступени: у почасовых станций — zł за час, у остальных — zł за штуку.
+const rateTxt = (st, r) => C.ST[st].hourly ? `${money(r)} zł/ч` : `${r.toFixed(3).replace('.', ',')} zł`;
+const stKeys = extra => extra ? Object.keys(C.ST).filter(k => !DB.mainSt.includes(k)) : DB.mainSt;
+const isExtra = k => !DB.mainSt.includes(k);
+// Конструктор: человек сам выбирает 3–5 станций, которые висят сверху на «Пиках».
+function stSheet() {
+  const a = STATE.stPick, n = a.length;
+  sheet(`<h3>Свои станции</h3><p>Выбери ${MAIN_MIN}–${MAIN_MAX} рабочих мест, где ты работаешь чаще всего. Они встанут кнопками на вкладке «Пики», остальные — под «Дополнительно». Порядок — как нажимаешь.</p>
+    <div class="st-pick">${Object.keys(C.ST).map(k => { const i = a.indexOf(k); return `<button class="st-pb${i >= 0 ? ' on' : ''}" style="--stc:${C.ST[k].col}" data-act="st-pick" data-st="${k}" aria-pressed="${i >= 0}">
+      <span class="st-tag" style="background:${C.ST[k].col}">${C.ST[k].name}</span><span class="st-pb-b"><b>${esc(C.ST[k].full)}</b><small>норма ${C.ST[k].norm}${C.ST[k].hourly ? ', ставка за час' : ''}</small></span><i>${i >= 0 ? i + 1 : ''}</i></button>`; }).join('')}</div>
+    <div class="stack"><button class="btn btn-acc btn-wide" data-act="st-save" ${n >= MAIN_MIN ? '' : 'disabled'}>${n >= MAIN_MIN ? `Сохранить: ${n} ${plural(n, 'станция', 'станции', 'станций')}` : `Выбери ещё ${MAIN_MIN - n}`}</button>
+    <button class="btn btn-ghost btn-wide" data-act="st-default">Как было: ${MAIN_ST.map(k => C.ST[k].name).join(', ')}</button></div>`);
+}
+
 function renderPeaks() {
   const st = STATE.curSt, cfg = C.ST[st];
   document.getElementById('p-peaks').style.setProperty('--stc', cfg.col);
-  $('st-seg').innerHTML = Object.keys(C.ST).map(k => `<button class="seg-b${k === st ? ' on' : ''}" role="tab" aria-selected="${k === st}" data-act="station" data-st="${k}">${C.ST[k].name}</button>`).join('');
+  const segB = k => `<button class="seg-b${k === st ? ' on' : ''}" role="tab" aria-selected="${k === st}" data-act="station" data-st="${k}">${C.ST[k].name}</button>`;
+  $('st-seg').innerHTML = stKeys(false).map(segB).join('');
+  $('st-more').innerHTML = `<button class="more-b${STATE.stMore ? ' open' : ''}${isExtra(st) ? ' has' : ''}" data-act="st-more" aria-expanded="${!!STATE.stMore}">
+      <span>Дополнительно</span><small>${isExtra(st) ? `${esc(cfg.name)}, ${esc(cfg.full)}` : stKeys(true).map(k => C.ST[k].name).join(' · ')}</small><i aria-hidden="true">${STATE.stMore ? '−' : '+'}</i></button>
+    ${STATE.stMore ? `<div class="seg st-seg st-extra" role="tablist">${stKeys(true).map(k => `<button class="seg-b${k === st ? ' on' : ''}" role="tab" aria-selected="${k === st}" data-act="station" data-st="${k}"><b>${C.ST[k].name}</b><small>${esc(C.ST[k].full)}</small></button>`).join('')}</div>
+      <button class="link st-edit" data-act="st-edit">Настроить свои станции</button>` : ''}`;
 
   const now = new Date(), mk = C.monthKey(now), today = C.shiftToday(now);
   const tEs = DB.entries.filter(e => e.station === st && e.shiftDate === today);
@@ -566,9 +607,10 @@ function renderPeaks() {
       <div><b>${th ? int(tc.above) : '—'}</b><span>сверх нормы</span></div>
       <div><b>${th ? h1(th) : '—'}</b><span>часов</span></div>
     </div>
-    <div class="steps" aria-label="Ступени ставки по темпу месяца">${cfg.tr.map(([lo, hi, r], i) => `<i class="${i < tier ? 'hit' : i === tier && a.H ? 'cur' : ''}" style="height:${18 + Math.round(r / maxR * 82)}%" title="${lo}–${hi === 999 ? '∞' : hi}: ${r} zł"></i>`).join('')}</div>
+    <div class="steps" aria-label="Ступени ставки по темпу месяца">${cfg.tr.map(([lo, hi, r], i) => `<i class="${i < tier ? 'hit' : i === tier && a.H ? 'cur' : ''}" style="height:${18 + Math.round(r / maxR * 82)}%" title="${lo}–${hi === 999 ? '∞' : hi}: ${rateTxt(st, r)}"></i>`).join('')}</div>
     <div class="steps-l"><span>0</span><span>норма ${cfg.norm}</span><span>${cfg.tr[cfg.tr.length - 1][0]}+</span></div>
-    <div class="gauge-f"><div><small style="color:var(--sub)">Премия за месяц, с обецностью</small><br><span style="font-size:13px;color:var(--sub)">${int(a.above)} шт × ${a.rate.toFixed(3).replace('.', ',')} zł × ${fx(pfP)}, темп ${h1(a.pph)}</span></div><b>${money(a.bonus * pfP)} zł</b></div>`;
+    ${cfg.hourly ? `<p class="hint" style="margin:8px 0 0">Ставка за каждый час на станции, если средний темп месяца выше нормы ${cfg.norm} пачек в час.</p>` : ''}
+    <div class="gauge-f"><div><small style="color:var(--sub)">Премия за месяц, с обецностью</small><br><span style="font-size:13px;color:var(--sub)">${cfg.hourly ? `${h1(a.H)} ч × ${rateTxt(st, a.rate)}` : `${int(a.above)} шт × ${rateTxt(st, a.rate)}`} × ${fx(pfP)}, темп ${h1(a.pph)}</span></div><b>${money(a.bonus * pfP)} zł</b></div>`;
   renderForm();
   renderPeaksMonth();
 }
@@ -615,7 +657,7 @@ function qaUpdate(ev) {
   const c = C.calc(STATE.curSt, p, hrs);
   box.hidden = false;
   box.innerHTML = `<div><span>Темп</span><b>${h1(c.pph)}</b></div><div><span>Норма</span><b>${int(c.norm)}</b></div><div><span>Сверх</span><b>${int(c.above)}</b></div>
-    <div><span>Ставка</span><b>${c.rate.toFixed(3).replace('.', ',')}</b></div><div class="bn" style="grid-column:span 2"><span>Премия за эту смену, если темп такой весь месяц</span><b>${money(c.bonus)} zł</b></div>`;
+    <div><span>Ставка</span><b>${C.ST[STATE.curSt].hourly ? `${money(c.rate)}/ч` : c.rate.toFixed(3).replace('.', ',')}</b></div><div class="bn" style="grid-column:span 2"><span>Премия за эту смену, если темп такой весь месяц</span><b>${money(c.bonus)} zł</b></div>`;
 }
 
 function qaSave() {
@@ -678,6 +720,7 @@ function renderCal() {
   for (let i = 0; i < off; i++) h += '<div class="cd e"></div>';
   const ovtDays = {}; DB.ovt.filter(o => o.date.slice(0, 7) === mk).forEach(o => { ovtDays[+o.date.slice(8)] = (ovtDays[+o.date.slice(8)] || 0) + o.hours; });
   let work = 0, hol = 0, url = 0, abs = 0;
+  const pays = payMarks(mk);
   for (let d = 1; d <= dim; d++) {
     const day = `${mk}-${String(d).padStart(2, '0')}`, span = p.days[d], isU = DB.urlop[mk]?.[d], isA = DB.absent[mk]?.[d], isH = p.holidays[String(d)];
     let cls = 'cd', sub = '';
@@ -686,10 +729,20 @@ function renderCal() {
     else if (isH) { cls += ' h'; sub = 'święto'; hol++; }
     else if (span) { cls += ' w'; sub = `${span.from.slice(0, 2)}–${span.to.slice(0, 2)}`; work++; }
     if (day === today) cls += ' t'; else if (day < today) cls += ' past';
-    h += `<button class="${cls}" data-act="day" data-d="${d}" aria-label="${d} ${MONTHS_GEN[m]}${sub ? ', ' + sub : ''}">${d}${sub ? `<small>${sub}</small>` : ''}${ovtDays[d] ? '<span class="dot"></span>' : ''}</button>`;
+    const pay = pays.days[d];
+    h += `<button class="${cls}" data-act="day" data-d="${d}" aria-label="${d} ${MONTHS_GEN[m]}${sub ? ', ' + sub : ''}${pay ? ', зарплата' : ''}">${d}${sub ? `<small>${sub}</small>` : ''}${ovtDays[d] ? '<span class="dot"></span>' : ''}${pay ? `<span class="payc${pay === 'got' ? ' got' : ''}">zł</span>` : ''}</button>`;
   }
   $('cal-grid').innerHTML = h;
-  $('cal-legend').innerHTML = `<span><i style="background:var(--acc)"></i>смена ${work}</span><span><i style="background:var(--bad)"></i>праздник ${hol}</span><span><i style="background:#B07CF2"></i>отпуск ${url}</span>${abs ? `<span><i style="background:repeating-linear-gradient(-45deg,var(--warn) 0 2px,transparent 2px 4px);box-shadow:inset 0 0 0 1px var(--warn)"></i>пропуск ${abs}</span>` : ''}<span><i style="background:var(--kraft)"></i>сверхурочные</span>`;
+  $('cal-legend').innerHTML = `<span><i style="background:var(--acc)"></i>смена ${work}</span><span><i style="background:var(--bad)"></i>праздник ${hol}</span><span><i style="background:#B07CF2"></i>отпуск ${url}</span>${abs ? `<span><i style="background:repeating-linear-gradient(-45deg,var(--warn) 0 2px,transparent 2px 4px);box-shadow:inset 0 0 0 1px var(--warn)"></i>пропуск ${abs}</span>` : ''}<span><i style="background:var(--kraft)"></i>сверхурочные</span>${pays.label ? `<span><i class="lg-pay"></i>${esc(pays.label)}</span>` : ''}`;
+}
+
+// Зарплата за прошлый месяц в календаре месяца mk: пришла или прогноз.
+function payMarks(mk) {
+  const W = C.addMonths(mk, -1), p = paydayFor(W), days = {}, name = MONTHS[+W.slice(5) - 1];
+  if (p.actual && p.actual.slice(0, 7) === mk) { days[+p.actual.slice(8)] = 'got'; return { days, p, label: `зарплата за ${name} пришла` }; }
+  p.days.filter(x => x.day.slice(0, 7) === mk).forEach(x => { days[+x.day.slice(8)] = x.p; });
+  const l = likely(p);
+  return { days, p, label: Object.keys(days).length ? `зарплата за ${name} ${l.day === p.deadline ? 'до' : '≈'} ${+l.day.slice(8)}-го` : '' };
 }
 
 // Отпуск и пропуск в один день не бывают — отметка одного снимает другое.
@@ -702,6 +755,12 @@ function markDay(kind, other, day) {
   if (kind === 'absent') { pushRank(); const n = Object.keys(DB.absent[mk] || {}).length; toast(`Пропусков в месяце: ${n}, премия ×${fx(C.premiumFactor(n))}`); }
 }
 
+function payLine(mk, d) {
+  const pm = payMarks(mk), v = pm.days[d]; if (!v) return '';
+  const name = MONTHS[+pm.p.month.slice(5) - 1];
+  return `<button class="pay-line" data-act="go" data-to="odcinek"><span>zł</span><b>${v === 'got' ? `Зарплата за ${name} пришла в этот день` : v === 1 ? `Зарплата за ${name}: крайний срок` : `Зарплата за ${name}: ${Math.round(v * 100)}%, что придёт к этому дню`}</b><small>${v === 'got' ? 'по отметкам людей' : 'прогноз по правилу «до 10-го» и датам людей'} ›</small></button>`;
+}
+
 function daySheet(d) {
   const mk = `${STATE.calY}-${String(STATE.calM + 1).padStart(2, '0')}`, day = `${mk}-${String(d).padStart(2, '0')}`;
   const p = plan(mk), span = p && p.days[d], hol = p && p.holidays[String(d)], isU = DB.urlop[mk]?.[d], isA = DB.absent[mk]?.[d];
@@ -709,6 +768,7 @@ function daySheet(d) {
   const absN = Object.keys(DB.absent[mk] || {}).length;
   sheet(`<h3>${esc(dayName(day))}</h3>
     <p>${hol ? `Праздник: ${esc(hol)}` : span ? `Смена ${p.label} ${span.from}–${span.to}` : 'Выходной по графику'}${isU ? '. Отмечен отпуск.' : ''}${isA ? '. Отмечен пропуск.' : ''}</p>
+    ${payLine(mk, d)}
     <div class="grid2">
       <button class="btn ${isU ? 'btn-ghost' : 'btn-acc'}" data-act="urlop" data-day="${day}">${isU ? 'Снять отпуск' : 'Отпуск'}</button>
       ${span ? `<button class="btn ${isA ? 'btn-ghost' : 'btn-warn'}" data-act="absent" data-day="${day}">${isA ? 'Снять пропуск' : 'Пропуск'}</button>` : '<span></span>'}
@@ -784,7 +844,9 @@ function walletRollover(now = new Date()) {
   if (cur && cur.month < W) {
     const r = C.salary(salaryInput(cur.inp));
     const v = C.variableOf(r, cur.inp);              // пригодится для отпускных следующих месяцев
-    DB.wallet.hist.unshift({ month: cur.month, netto: r.netto, brutto: r.brutto, bonus: r.parts.bonus, savedAt: cur.savedAt, var: v.var, hours: v.hours });
+    const ex = DB.wallet.hist.find(h => h.month === cur.month);
+    if (ex && ex.slip) ex.calc = ex.calc || { netto: r.netto, brutto: r.brutto, bonus: r.parts.bonus };   // odcinek уже в истории — он главнее
+    else DB.wallet.hist.unshift({ month: cur.month, netto: r.netto, brutto: r.brutto, bonus: r.parts.bonus, savedAt: cur.savedAt, var: v.var, hours: v.hours });
     DB.wallet.hist = DB.wallet.hist.slice(0, 36);
     DB.wallet.cur = null; DB.wallet.draft = null;
     toastLater(`Кошелёк обновлён: ${MONTHS[+cur.month.slice(5) - 1]} ушёл в историю, считаем ${MONTHS[+W.slice(5) - 1]}`);
@@ -877,7 +939,7 @@ function renderWallet(fresh = true) {
   renderSlip(v, until, left, bonusChanged);
   renderWalletForm(v);
   renderBreakdown(v.res);
-  $('wallet-hist').innerHTML = DB.wallet.hist.length ? DB.wallet.hist.map(h => `<div class="whist"><div><b>${mLabel(h.month)}</b><small>брутто ${money(h.brutto)} zł, премия ${money(h.bonus)} zł</small></div><div class="v">${money(h.netto)}<small>zł на руки</small></div></div>`).join('')
+  $('wallet-hist').innerHTML = DB.wallet.hist.length ? DB.wallet.hist.map(h => { const lv = h.slip ? slipLevel(h.month) : null; return `<${h.slip ? 'button data-act="slip-view" data-m="' + h.month + '"' : 'div'} class="whist"><div><b>${mLabel(h.month)}${lv ? ` <span class="oc-chip ${lv}">odcinek ${LV[lv].ic}</span>` : ''}</b><small>брутто ${money(h.brutto)} zł, премия ${money(h.bonus)} zł${h.calc ? `, трекер насчитал ${money(h.calc.netto)}` : ''}</small>${lv ? slipShort(h.month) : ''}</div><div class="v">${money(h.netto)}<small>zł на руки</small></div></${h.slip ? 'button' : 'div'}>`; }).join('')
     : `<div class="empty">Здесь появятся прошлые месяцы. Расчёт переходит сюда 10-го числа.</div>`;
   if (bonusChanged) toast(`Премия обновлена: ${money(v.res.parts.bonus)} zł`);
 }
@@ -1016,6 +1078,208 @@ function walletLive() {
   renderBreakdown(r);
 }
 
+// ═════════════════════ ODCINEK ═════════════════════
+// Odcinek płacowy разбирается на телефоне (slip.js), проверка — в core.js.
+// Наружу уходит только дата, когда пришли деньги: из дат всех людей
+// складывается прогноз следующей зарплаты.
+const LV = {
+  ok:   { ic: '✓', title: 'Odcinek верный' },
+  warn: { ic: '!', title: 'Налоги верные, есть вопросы' },
+  bad:  { ic: '✕', title: 'В odcinku ошибка' },
+};
+const ITEM_IC = { ok: '✓', info: 'i', warn: '!', bad: '✕' };
+const slipsOf = mk => DB.slips.filter(s => s.month === mk).sort((a, b) => (a.kind === 'main' ? 0 : 1) - (b.kind === 'main' ? 0 : 1) || (a.list < b.list ? -1 : 1));
+const dayLong = day => { const [, m, d] = day.split('-').map(Number); return `${d} ${MONTHS_GEN[m - 1]}`; };
+
+// Что насчитал сам трекер за месяц — с этим сверяем odcinek.
+function trackerNetto(mk) {
+  const h = DB.wallet.hist.find(x => x.month === mk);
+  if (h && h.calc) return h.calc.netto;
+  if (h && !h.slip) return h.netto;
+  if (DB.wallet.cur && DB.wallet.cur.month === mk) return C.salary(salaryInput(DB.wallet.cur.inp)).netto;
+  return autoHours(mk).has ? C.salary(salaryInput(autoInp(mk))).netto : 0;
+}
+function slipCtx(mk) {
+  const a = autoHours(mk), base = bonusFor(mk), pf = C.premiumFactor(a.absences), ys = youngFor(mk);
+  return { young: ys.status === 'yes' || ys.status === 'partial' ? true : ys.status === 'no' ? false : null, team: DB.team,
+    tracker: { bonusBase: C.r2(base), bonus: C.r2(base * pf), pf, has: a.has, hours: a.hours, urlopHours: a.urlop, netto: trackerNetto(mk) } };
+}
+const slipResultOf = mk => { const ss = slipsOf(mk); return ss.length ? C.slipCheck(ss, slipCtx(mk)) : null; };
+const slipLevel = mk => (slipResultOf(mk) || {}).level || null;
+const slipIc = mk => (LV[slipLevel(mk)] || LV.ok).ic;
+// Одна строка для истории: недоплата премии или «всё сходится».
+function slipShort(mk) {
+  const r = slipResultOf(mk); if (!r) return '';
+  const bad = r.items.find(i => i.level === 'bad');
+  return `<small class="oc-note ${r.level}">${bad ? esc(`${bad.title}: ${bad.text.split('. ')[0]}`) : r.level === 'ok' ? 'по odcinku всё сходится' : 'есть вопросы — открой проверку'}</small>`;
+}
+
+// Сумма odcinków месяца → «Прошлые выплаты». Прежний расчёт трекера — в calc.
+function syncSlipHist(mk) {
+  const ss = slipsOf(mk), hist = DB.wallet.hist, i = hist.findIndex(h => h.month === mk), h = i >= 0 ? hist[i] : null;
+  if (!ss.length) {
+    if (h && h.slip) { if (h.calc) { const { calc, slip, ...rest } = h; hist[i] = { ...rest, ...calc }; } else hist.splice(i, 1); }
+    return;
+  }
+  const sum = fn => C.r2(ss.reduce((t, x) => t + fn(x), 0));
+  const ovtOf = x => Object.values(x.ovt || {});
+  const v = sum(x => (x.f.bonus || 0) + (x.f.night || 0) + (x.f.dark || 0) + (x.f.ovtTotal ?? ovtOf(x).reduce((a, o) => a + (o.amount || 0), 0)));
+  const hrs = sum(x => (x.f.hours || 0) + ovtOf(x).reduce((a, o) => a + (o.hours || 0), 0));
+  const calc = h && !h.slip ? { netto: h.netto, brutto: h.brutto, bonus: h.bonus } : h && h.calc;
+  const row = { month: mk, netto: sum(x => x.f.netto), brutto: sum(x => x.f.brutto), bonus: sum(x => x.f.bonus || 0), savedAt: (h && h.savedAt) || new Date().toISOString(), slip: true,
+    ...(calc ? { calc } : {}), ...(hrs > 0 ? { var: v, hours: hrs } : h && h.hours ? { var: h.var, hours: h.hours } : {}) };
+  if (h) hist[i] = row; else { hist.push(row); hist.sort((a, b) => (a.month < b.month ? 1 : -1)); }
+  DB.wallet.hist = hist.slice(0, 36);
+}
+
+// ── дата зарплаты: правило + даты, которые отметили люди ──
+function payReports() {
+  if (STATE.paydays) return STATE.paydays;
+  const r = {};                                            // сервер недоступен — хотя бы свои отметки
+  DB.slips.filter(s => s.kind === 'main' && s.gotOn).forEach(s => { (r[s.month] = r[s.month] || {})[s.gotOn] = 1; });
+  return r;
+}
+async function loadPaydays(force) {
+  if (!STATE.verified || (!force && STATE.paydays && Date.now() - STATE.paydaysAt < 600000)) return;
+  if (STATE.paydaysBusy) return;
+  STATE.paydaysBusy = true;
+  try {
+    const j = await api('paydays', {});
+    if (j && j.reports && typeof j.reports === 'object') {
+      STATE.paydays = j.reports; STATE.paydaysAt = Date.now();
+      const top = STATE.stack[STATE.stack.length - 1] || STATE.tab;
+      if (top === 'home') renderPlateCheck(); else if (top === 'odcinek') renderOdcinek(); else if (top === 'sched' && STATE.schedTab === 'cal') renderCal();
+    }
+  } catch {} finally { STATE.paydaysBusy = false; }
+}
+function reportPay(s) {
+  if (!STATE.verified) return;
+  api('payday', { month: s.month, kind: s.kind, paid_on: s.gotOn || '' }).then(() => loadPaydays(true)).catch(() => {});
+}
+// Своя отметка о приходе денег сильнее прогноза.
+function paydayFor(W) {
+  const p = C.payday(W, payReports()), own = DB.slips.find(s => s.month === W && s.kind === 'main' && s.gotOn);
+  return own ? { ...p, actual: own.gotOn, own: true } : p;
+}
+// Ближайшая зарплата: за прошлый месяц, пока она не пришла и срок не прошёл, иначе — за текущий.
+function nextPay(now = new Date()) {
+  const today = C.iso(now), mk = C.monthKey(now), W = C.addMonths(mk, -1), p = paydayFor(W);
+  const came = p.actual && p.actual <= today;
+  return { last: came ? p : null, next: came || today > p.deadline ? paydayFor(mk) : p };
+}
+const likely = p => (p.days.find(x => x.p >= .5) || p.days[p.days.length - 1] || { day: p.deadline, p: 1 });
+function payText(p) {
+  const l = likely(p);
+  return l.day === p.deadline ? `до ${dayLong(p.deadline)}` : `≈ ${dayLong(l.day)} (${Math.round(l.p * 100)}%), точно до ${dayLong(p.deadline)}`;
+}
+
+function renderPlateCheck() {
+  const el = $('plate-check-sub'); if (!el) return;
+  const last = [...new Set(DB.slips.map(s => s.month))].sort().pop(), np = nextPay(), l = likely(np.next);
+  const lv = last ? slipLevel(last) : null;
+  el.textContent = `${lv ? `${MONTHS[+last.slice(5) - 1]}: ${lv === 'ok' ? 'верно ✓' : lv === 'bad' ? 'ошибка ✕' : 'есть вопросы'} · ` : ''}зарплата ${l.day === np.next.deadline ? 'до' : '≈'} ${dayLong(l.day)}`;
+  loadPaydays();
+}
+
+function renderOdcinek() {
+  loadPaydays();
+  const months = [...new Set(DB.slips.map(s => s.month))].sort().reverse();
+  const view = months.includes(STATE.slipView) ? STATE.slipView : months[0];
+  const np = nextPay(), nW = np.next.month;
+  const ppl = Object.values(payReports()[nW] || {}).reduce((a, b) => a + b, 0);
+  $('odcinek').innerHTML = `
+    <div class="card oc-up">
+      <p>Загрузи odcinek płacowy — PDF из письма или портала. Трекер прочитает его прямо на телефоне, файл никуда не уходит. Проверим налоги, премию, часы, ночные и отпускные.</p>
+      ${STATE.slipErr ? `<div class="oc-err">${esc(STATE.slipErr)}</div>` : ''}
+      <button class="btn btn-acc btn-wide" data-act="slip-pick" id="slip-pick">Загрузить odcinek, PDF</button>
+    </div>
+    <div class="card pay-card">
+      <div class="pay-ic" aria-hidden="true">zł</div>
+      <div class="pay-b">
+        ${np.last ? `<small class="pay-last">За ${MONTHS[+np.last.month.slice(5) - 1]} пришла ${dayLong(np.last.actual)}${np.last.own ? '' : `, отметили ${np.last.actualN}`}</small>` : ''}
+        <b>Зарплата за ${MONTHS[+nW.slice(5) - 1]}</b>
+        <span>${np.next.actual ? `пришла ${dayLong(np.next.actual)}${np.next.own ? ', твоя отметка' : `, отметили ${np.next.actualN}`}` : esc(payText(np.next))}</span>
+        ${np.next.actual ? '' : `<div class="pay-bar">${np.next.days.map((x, i, a) => `<i style="flex:${Math.max(.2, x.p - (i ? a[i - 1].p : 0))}"><b>${+x.day.slice(8)}</b><small>${Math.round(x.p * 100)}%</small></i>`).join('')}</div>`}
+      </div>
+    </div>
+    <p class="hint">Зарплата — до 10-го. Если 10-е выпадает на выходной или праздник, деньги приходят в последний рабочий день перед ним, а часто на день раньше срока. ${np.next.src === 'data' ? `Прогноз уточнён по датам людей за ${np.next.months} ${plural(np.next.months, 'месяц', 'месяца', 'месяцев')}.` : 'Отмечай, когда пришли деньги, — прогноз станет точнее для всех.'}${ppl && !np.next.actual ? ` Уже отметили: ${ppl}.` : ''}</p>
+    ${view ? slipCard(view) : ''}
+    ${months.length > 1 ? `<h2 class="sec">Проверенные месяцы</h2><div class="list">${months.map(m => slipRow(m, m === view)).join('')}</div>` : ''}`;
+}
+
+function slipRow(mk, on) {
+  const ss = slipsOf(mk), r = slipResultOf(mk), lv = LV[r.level];
+  return `<button class="strow${on ? ' me-row' : ''}" data-act="slip-view" data-m="${mk}"><span class="st-tag oc-tag ${r.level}">${lv.ic}</span>
+    <span class="strow-b"><b>${mLabel(mk)}</b><small>${ss.length > 1 ? `${ss.length} листа, ` : ''}выплата ${ss[0].payDate ? fmtD(ss[0].payDate) : '—'}</small></span>
+    <span class="strow-r">${money(r.netto)}<small>zł на руки</small></span></button>`;
+}
+
+function slipCard(mk) {
+  const ss = slipsOf(mk), r = slipResultOf(mk), lv = LV[r.level], today = C.iso(new Date());
+  return `<div class="card oc-res ${r.level}" id="oc-res">
+    <div class="oc-v"><span class="oc-ic">${lv.ic}</span><div><b>${lv.title}</b><small>${mLabel(mk)}: ${ss.map(s => esc(s.kind === 'kor' ? `korekta ${s.list}` : `lista ${s.list || 'główna'}`)).join(' + ')}</small></div></div>
+    <div class="oc-sum"><div><span>На руки</span><b>${money(r.netto)}</b></div><div><span>Брутто</span><b>${money(r.brutto)}</b></div><div><span>Премия</span><b>${money(r.bonus)}</b></div></div>
+    <ul class="oc-list">${r.items.map(i => `<li class="${i.level}"><i aria-hidden="true">${ITEM_IC[i.level]}</i><div><b>${esc(i.title)}</b><small>${esc(i.text)}</small></div></li>`).join('')}</ul>
+    ${ss.map(s => `<div class="oc-got">
+      <label class="field"><span>${s.kind === 'kor' ? 'Korekta пришла' : 'Деньги пришли'} на счёт</span><input class="in" type="date" value="${s.gotOn}" max="${today}" data-in="slip-got" data-id="${esc(s.id)}"></label>
+      <button class="chip" data-act="slip-today" data-id="${esc(s.id)}">Сегодня</button></div>
+      <small class="oc-hint">В odcinku дата выплаты ${s.payDate ? fmtD(s.payDate) : '—'}. Дата прихода без сумм и имени попадёт в общий прогноз зарплаты.</small>`).join('')}
+    ${slipSuggest(mk, r.profile)}
+    <button class="btn btn-ghost btn-wide" style="margin-top:12px" data-act="slip-del" data-m="${mk}">Удалить odcinek за ${MONTHS[+mk.slice(5) - 1]}</button>
+  </div>`;
+}
+
+// Что из odcinka стоит перенести в настройки кошелька.
+function slipChanges(pr) {
+  const p = DB.profile, out = [];
+  if (pr.rate && Math.abs(pr.rate - currentRate()) > .004) out.push(['rate', `ставка ${money(pr.rate)} zł/ч`]);
+  if (pr.ekw !== undefined && Math.abs(pr.ekw - p.ekw) > .004) out.push(['ekw', `эквиваленты ${money(pr.ekw)} zł`]);
+  if (Math.abs((pr.deduct || 0) - p.deduct) > .004) out.push(['deduct', `удержания (benefit) ${money(pr.deduct || 0)} zł`]);
+  if (pr.kup && pr.kup !== p.kup) out.push(['kup', `KUP ${pr.kup === 'commute' ? 300 : 250} zł`]);
+  if (pr.ppk !== p.ppk) out.push(['ppk', pr.ppk ? 'PPK включён' : 'PPK выключен']);
+  return out;
+}
+function slipSuggest(mk, pr) {
+  const ch = slipChanges(pr);
+  const young = pr.youngLikely && !DB.profile.birthOk ? '<p class="hint" style="margin-top:10px">PIT 0 zł — похоже, у тебя ulga dla młodych. Подтверди дату рождения в кошельке, чтобы расчёт совпадал.</p>' : '';
+  if (!ch.length) return young;
+  return `${young}<div class="oc-apply"><b>В кошельке другие цифры</b><small>${ch.map(c => c[1]).join(', ')}</small>
+    <button class="btn btn-acc btn-wide" data-act="slip-apply" data-m="${mk}">Взять из odcinka</button></div>`;
+}
+
+async function slipUpload(file) {
+  const btn = $('slip-pick'); if (btn) { btn.disabled = true; btn.textContent = 'Читаю odcinek…'; }
+  STATE.slipErr = '';
+  try {
+    const parsed = await window.Slip.readFile(file);
+    const id = `${parsed.month}#${parsed.list || parsed.kind}`;
+    const prev = DB.slips.find(x => x.id === id);
+    const rec = cleanSlip({ ...parsed, id, gotOn: prev ? prev.gotOn : '', at: new Date().toISOString() });
+    if (!rec) throw new Error('not-odcinek');
+    DB.slips = [...DB.slips.filter(x => x.id !== id), rec].slice(-36);
+    syncSlipHist(rec.month); save(); haptic.ok();
+    STATE.slipView = rec.month;
+    renderOdcinek();
+    const r = slipResultOf(rec.month);
+    toast(r.level === 'ok' ? `Odcinek за ${MONTHS[+rec.month.slice(5) - 1]}: всё верно` : r.level === 'bad' ? 'В odcinku есть ошибка' : 'Odcinek прочитан, есть вопросы');
+    $('oc-res')?.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'start' });
+  } catch (e) {
+    haptic.err();
+    STATE.slipErr = ({ 'no-inflate': 'Телефон не умеет распаковывать PDF. Обнови Telegram или систему.', 'not-pdf': 'Это не PDF. Нужен файл odcinka из письма или портала.',
+      'too-big': 'Файл больше 3 МБ — это точно odcinek?', 'not-odcinek': 'В файле нет odcinka AutoDoc: не нашёл брутто и сумму к выплате.',
+      'no-text': 'В PDF нет текста — похоже, это скан или фото. Нужен PDF из письма.' })[e && e.message] || 'Не получилось прочитать файл. Нужен PDF odcinka из письма.';
+    renderOdcinek();
+  } finally { const fi = $('slip-file'); if (fi) fi.value = ''; }
+}
+
+function setSlipGot(id, day) {
+  const s = DB.slips.find(x => x.id === id); if (!s) return;
+  s.gotOn = RE_DAY.test(day) && day <= C.iso(new Date()) ? day : '';
+  save(); reportPay(s); haptic.pick();
+  if (s.gotOn) toast(`Отмечено: пришла ${dayLong(s.gotOn)}`);
+  renderOdcinek();
+}
+
 // ═════════════════════ ЕЩЁ ═════════════════════
 async function renderRating() {
   const m = STATE.rankMonth || C.monthKey(new Date());
@@ -1059,7 +1323,7 @@ function monthStats(mk) {
   // Вся сумма за месяц: сохранённый расчёт кошелька, иначе расчёт по графику и отметкам
   const saved = DB.wallet.hist.find(h => h.month === mk);
   let pay;
-  if (saved) pay = { netto: saved.netto, brutto: saved.brutto, src: 'saved' };
+  if (saved) pay = { netto: saved.netto, brutto: saved.brutto, src: saved.slip ? 'slip' : 'saved' };
   else {
     const inp = DB.wallet.cur && DB.wallet.cur.month === mk ? DB.wallet.cur.inp : (DB.wallet.draft && DB.wallet.draft.month === mk ? DB.wallet.draft : autoInp(mk));
     const r = C.salary(salaryInput(inp));
@@ -1082,7 +1346,7 @@ function renderArchive() {
     const t = monthStats(m);
     return `<div class="card mcard">
       <div class="mcard-h"><div><b>${mLabel(m)}</b>${t.cur ? '<span class="ms-live">идёт</span>' : ''}</div>
-        <div class="mcard-v">${money(t.pay.netto)}<small>zł на руки${t.pay.src === 'est' ? ', расчёт' : ''}</small><small>брутто ${money(t.pay.brutto)}</small></div></div>
+        <div class="mcard-v">${money(t.pay.netto)}<small>zł на руки${t.pay.src === 'est' ? ', расчёт' : t.pay.src === 'slip' ? `, odcinek ${slipIc(m)}` : ''}</small><small>брутто ${money(t.pay.brutto)}</small></div></div>
       <div class="ms-grid">
         ${cell('🗓', 'Смен', t.has ? `${t.worked}` : '—', t.has ? `по графику ${t.scheduled}, ${h1(t.hours)} ч` : 'графика нет')}
         ${cell('🏖', 'Отпуск', t.urlopDays ? `${t.urlopDays} ${plural(t.urlopDays, 'день', 'дня', 'дней')}` : '—', t.urlopHours ? `${h1(t.urlopHours)} ч` : '')}
@@ -1099,11 +1363,16 @@ function renderArchive() {
 
 function renderRates() {
   const mk = C.monthKey(new Date());
-  $('rates-list').innerHTML = Object.entries(C.ST).map(([st, cfg]) => {
+  const card = ([st, cfg]) => {
     const a = C.monthAgg(DB.entries, st, mk), cur = Math.round(a.pph), maxR = cfg.tr[cfg.tr.length - 1][2];
-    return `<div class="card rate-card" style="--stc:${cfg.col}"><div class="gauge-h"><b>${cfg.name}, ${cfg.full}</b><small>норма ${cfg.norm} в час</small></div>
-      ${cfg.tr.map(([lo, hi, r]) => { const on = a.H && cur >= lo && cur <= hi; return `<div class="rate-row${on ? ' cur' : ''}"><div>${lo === 0 ? `до ${hi}` : hi === 999 ? `от ${lo}` : `${lo}–${hi}`} в час${on ? ', твой темп' : ''}<div class="rate-bar"><i style="width:${Math.round(r / maxR * 100)}%"></i></div></div><b>${r.toFixed(3).replace('.', ',')} zł</b></div>`; }).join('')}</div>`;
-  }).join('') + '<p class="hint">Премия = штуки сверх нормы × ставка по среднему темпу месяца.</p>';
+    return `<div class="card rate-card" style="--stc:${cfg.col}"><div class="gauge-h"><b>${cfg.name}, ${esc(cfg.full)}</b><small>норма ${cfg.norm} в час${cfg.hourly ? ', ставка за час' : ''}</small></div>
+      ${cfg.tr.map(([lo, hi, r]) => { const on = a.H && cur >= lo && cur <= hi; return `<div class="rate-row${on ? ' cur' : ''}"><div>${lo === 0 ? `до ${hi}` : hi === 999 ? `от ${lo}` : `${lo}–${hi}`} в час${on ? ', твой темп' : ''}<div class="rate-bar"><i style="width:${Math.round(r / maxR * 100)}%"></i></div></div><b>${rateTxt(st, r)}</b></div>`; }).join('')}</div>`;
+  };
+  const all = Object.entries(C.ST);
+  $('rates-list').innerHTML = `<h2 class="sec" style="margin-top:0">Мои станции <button class="link" data-act="st-edit">изменить</button></h2>`
+    + DB.mainSt.map(k => card([k, C.ST[k]])).join('')
+    + '<h2 class="sec">Дополнительно</h2>' + all.filter(([k]) => isExtra(k)).map(card).join('')
+    + '<p class="hint">Премия = штуки сверх нормы × ставка по среднему темпу месяца. У ZK (Załadunek) — часы на станции × ставка за час, по Aneksowi 2/2026 с 01.06.2026.</p>';
 }
 
 const BHP = [
@@ -1153,6 +1422,7 @@ function renderProfile() {
     <label class="field"><span>Имя в рейтинге</span><input class="in txt" id="pf-name" maxlength="40" value="${esc(DB.name)}" data-in="pf"></label>
     <div class="field" style="margin-top:12px"><span>Значок</span><div class="emojis">${EMOJI.map(e => `<button class="${DB.emoji === e ? 'on' : ''}" data-act="emoji" data-v="${e}">${e}</button>`).join('')}</div></div>
     <div class="field" style="margin-top:12px"><span>Тема</span><div class="chips">${th('auto', 'Как в Telegram')}${th('dark', 'Тёмная')}${th('light', 'Светлая')}</div></div>
+    <div class="field" style="margin-top:12px"><span>Свои станции на «Пиках»</span><button class="more-b" style="margin:0" data-act="st-edit"><span>${DB.mainSt.map(k => C.ST[k].name).join(' · ')}</span><small>изменить</small><i aria-hidden="true">›</i></button></div>
     <div class="field" style="margin-top:12px"><span>Неделя в календаре начинается с</span><div class="chips"><button class="chip${DB.ws === 'mon' ? ' on' : ''}" data-act="ws" data-v="mon">понедельника</button><button class="chip${DB.ws === 'sun' ? ' on' : ''}" data-act="ws" data-v="sun">воскресенья</button></div></div>
   </div>
   <h2 class="sec">Аккаунт</h2>
@@ -1166,13 +1436,13 @@ function renderProfile() {
 
 const RENDER = {
   home: renderHome, peaks: renderPeaks, sched: renderSched, wallet: renderWallet, more: () => {},
-  rating: renderRating, archive: renderArchive, rates: renderRates, bhp: renderBhp, notes: renderNotes, profile: renderProfile,
+  rating: renderRating, archive: renderArchive, odcinek: renderOdcinek, rates: renderRates, bhp: renderBhp, notes: renderNotes, profile: renderProfile,
 };
 function renderAll() { renderHeader(); (RENDER[STATE.stack[STATE.stack.length - 1] || STATE.tab] || renderHome)(); }
 
 // ═════════════════════ СОБЫТИЯ ═════════════════════
 const ACT = {
-  'go': el => { haptic.pick(); go(el.dataset.to); },
+  'go': el => { haptic.pick(); if (!$('sheet-bg').hidden) closeSheet(); go(el.dataset.to); },
   'consent': () => {
     DB.consent = { v: CFG.CONSENT_VERSION, at: new Date().toISOString() }; save(); haptic.ok();
     if (STATE.verified) { api('consent', { version: CFG.CONSENT_VERSION, ua: navigator.userAgent.slice(0, 300) }).catch(() => {}); pushRank(); }
@@ -1186,7 +1456,17 @@ const ACT = {
     $('consent').hidden = true; renderAll(); pushProfile(); pushRank();
     toast(`Смена ${teamMeta(DB.team).label} ${DB.group}: график и оповещения настроены`);
   },
-  'station': el => { STATE.curSt = el.dataset.st; haptic.pick(); if (STATE.tab !== 'peaks') go('peaks'); else renderPeaks(); },
+  'station': el => { STATE.curSt = el.dataset.st; if (isExtra(STATE.curSt)) STATE.stMore = true; haptic.pick(); if (STATE.tab !== 'peaks') go('peaks'); else renderPeaks(); },
+  'st-more': () => { STATE.stMore = !STATE.stMore; haptic.pick(); renderPeaks(); },
+  'st-edit': () => { STATE.stPick = DB.mainSt.slice(); stSheet(); },
+  'st-pick': el => { const k = el.dataset.st, a = STATE.stPick, i = a.indexOf(k);
+    if (i >= 0) a.splice(i, 1); else if (a.length < MAIN_MAX) a.push(k); else { haptic.err(); toast(`Не больше ${MAIN_MAX} станций`); return; }
+    haptic.pick(); stSheet(); },
+  'st-default': () => { STATE.stPick = MAIN_ST.slice(); haptic.pick(); stSheet(); },
+  'st-save': () => { if (STATE.stPick.length < MAIN_MIN) return;
+    DB.mainSt = cleanMain(STATE.stPick); save(); haptic.ok(); closeSheet();
+    toast(`Свои станции: ${DB.mainSt.map(k => C.ST[k].name).join(', ')}`);
+    const top = STATE.stack[STATE.stack.length - 1] || STATE.tab; (RENDER[top] || renderAll)(); },
   'qa-mode': el => { qa.mode = el.dataset.v; qa.f = qa.o = null; haptic.pick(); renderForm(); },
   'qa-save': () => qaSave(),
   'del-entry': el => confirmSheet('Удалить запись?', 'Премия за месяц пересчитается.', 'Удалить', () => {
@@ -1246,6 +1526,21 @@ const ACT = {
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {}
     toast('Данные удалены'); go('home'); renderAll(); }),
   'reverify': el => reverify(el),
+  'slip-pick': () => { $('slip-file').click(); },
+  'slip-view': el => { STATE.slipView = el.dataset.m; STATE.slipErr = ''; haptic.pick();
+    if (STATE.stack[STATE.stack.length - 1] !== 'odcinek') go('odcinek');
+    else renderOdcinek();
+    $('oc-res')?.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'start' }); },
+  'slip-today': el => setSlipGot(el.dataset.id, C.iso(new Date())),
+  'slip-apply': el => { const r = slipResultOf(el.dataset.m); if (!r) return; const pr = r.profile, p = DB.profile;
+    slipChanges(pr).forEach(([k]) => {
+      if (k === 'rate') { const m = ['33.00', '31.40', '35.00'].find(x => Math.abs(+x - pr.rate) < .004); p.rateMode = m || 'own'; if (!m) p.rate = pr.rate; }
+      else if (k === 'kup') p.kup = pr.kup; else if (k === 'ppk') p.ppk = pr.ppk; else p[k] = pr[k] || 0;
+    });
+    save(); haptic.ok(); toast('Кошелёк обновлён по odcinku'); renderOdcinek(); },
+  'slip-del': el => confirmSheet('Удалить odcinek?', 'Проверка и сумма из odcinka за этот месяц удалятся с телефона. В «Прошлых выплатах» вернётся расчёт трекера.', 'Удалить', () => {
+    const mk = el.dataset.m; DB.slips.filter(s => s.month === mk && s.gotOn).forEach(s => reportPay({ ...s, gotOn: '' }));
+    DB.slips = DB.slips.filter(s => s.month !== mk); syncSlipHist(mk); save(); STATE.slipView = null; renderOdcinek(); toast('Odcinek удалён'); }),
   'sheet-close': () => closeSheet(),
   'sheet-ok': () => { const f = STATE.sheetOk; STATE.sheetOk = null; closeSheet(); f && f(); },
 };
@@ -1259,6 +1554,8 @@ document.addEventListener('change', e => {
   const el = e.target;
   if (el.id === 'consent-cb') { $('consent-btn').disabled = !el.checked; return; }
   if (el.type === 'checkbox' && el.dataset.act && ACT[el.dataset.act]) ACT[el.dataset.act](el, e);
+  if (el.id === 'slip-file') { if (el.files && el.files[0]) slipUpload(el.files[0]); return; }
+  if (el.dataset.in === 'slip-got') { setSlipGot(el.dataset.id, el.value); return; }
   if (el.dataset.in === 'birth') { DB.profile.birth = RE_DAY.test(el.value) ? el.value : ''; DB.profile.birthOk = false; save(); renderWallet(false); }
 });
 document.addEventListener('input', e => {

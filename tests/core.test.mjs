@@ -161,5 +161,73 @@ t('график из schedule.json', () => {
   assert.equal(C.monthPlan(sched, 'green', 'A', '2026-10'), null);
 });
 
+t('дополнительные станции: PI, OP, HR по штукам, ZK — за час', () => {
+  assert.deepEqual(Object.keys(C.ST).filter(k => C.ST[k].extra), ['pi', 'op', 'hr', 'dp', 'rod', 'pod', 'zk']);
+  assert.equal(C.calc('dp', 1600, 8).rate, .07);              // темп 200 → 197–208
+  assert.equal(C.calc('rod', 1600, 8).rate, .11);
+  assert.equal(C.calc('pod', 2000, 8).rate, .05);             // 250 → 236–251
+  assert.equal(C.calc('rod', 2400, 8).rate, .19);             // 300 → от 290
+  const pi = C.calc('pi', 1440, 8);                         // темп 180 → 179–189 → 0,10
+  assert.equal(pi.norm, 1280); assert.equal(pi.rate, .10); assert.equal(C.r2(pi.bonus), 16);
+  const hr = C.calc('hr', 1600, 8);                         // темп 200 → 191–205 → 0,096
+  assert.equal(hr.rate, .096); assert.equal(C.r2(hr.bonus), C.r2((1600 - 1120) * .096));
+  const zk = C.calc('zk', 960, 8);                          // 120 пачек/ч → 116–130 → 13,69 zł за час
+  assert.equal(zk.rate, 13.69); assert.equal(C.r2(zk.bonus), C.r2(8 * 13.69));
+  assert.equal(C.calc('zk', 800, 8).bonus, 0);              // темп 100 — норма, премии нет
+  assert.equal(C.calc('zk', 1400, 8).rate, 20.83);          // 175 → от 161
+  const es = [{ station: 'zk', peaks: 900, hours: 8, shiftDate: '2026-10-01' }, { station: 'zk', peaks: 1000, hours: 8, shiftDate: '2026-10-02' }];
+  assert.equal(C.r2(C.monthAgg(es, 'zk', '2026-10').bonus), C.r2(16 * 13.69));   // месяц: 1900 / 16 ч = 118,75 → 119 → 13,69 zł/ч
+});
+
+t('odcinek: налоги сходятся, недоплата премии видна', () => {
+  // выдуманный odcinek: 160 ч × 30 zł, премия 500, ночные, ulga dla młodych
+  const night = C.r2(160 * .2 * 4806 / C.nominalHours('2026-10'));
+  const brutto = C.r2(4800 + 500 + night), zus = C.r2(C.r2(brutto * .0976) + C.r2(brutto * .015) + C.r2(brutto * .0245));
+  const hb = C.r2(brutto - zus), health = C.r2(hb * .09);
+  const f = { rate: 30, hours: 160, base: 4800, bonus: 500, nightHours: 160, night, brutto, zusBase: brutto, zus, healthBase: hb, health,
+    pitBase: Math.round(hb), pitPct: 12, ekw: 22.95, benefit: 10, netto: C.r2(brutto - zus - health - 10 + 22.95) };
+  const ok = C.slipCheck([{ month: '2026-10', kind: 'main', f, ovt: {}, other: [] }], { young: true });
+  assert.ok(['ok', 'warn'].includes(ok.level));
+  assert.ok(ok.items.find(i => i.title === 'ZUS 13,71%').level === 'ok');
+  assert.ok(ok.items.find(i => i.title === 'Składka zdrowotna 9%').level === 'ok');
+  assert.equal(ok.pit, 0);
+  assert.equal(ok.profile.deduct, 10); assert.equal(ok.profile.youngLikely, true);
+  // ночные меньше 20% от минимальной — ошибка
+  const lowNight = C.slipCheck([{ month: '2026-10', kind: 'main', f: { ...f, night: 100 }, ovt: {}, other: [] }], { young: true });
+  assert.ok(lowNight.items.some(i => i.level === 'bad' && /Ночная/.test(i.title)));
+  // премия меньше, чем по пикам в трекере
+  const low = C.slipCheck([{ month: '2026-10', kind: 'main', f, ovt: {}, other: [] }], { young: true, tracker: { bonusBase: 480, bonus: 600, pf: 1.25 } });
+  assert.equal(low.level, 'bad');
+  assert.match(low.items.find(i => i.level === 'bad').text, /100,00 zł/);
+  // 26+: PIT = 12% от базы − 300; без PIT-2 — предупреждение
+  const pb = Math.round(hb - 250), pit = Math.round(pb * .12 - 300);
+  const old = { ...f, pitBase: pb, pit, netto: C.r2(brutto - zus - health - pit - 10 + 22.95) };
+  const r = C.slipCheck([{ month: '2026-10', kind: 'main', f: old, ovt: {}, other: [] }], { young: false });
+  assert.equal(r.items.find(i => i.title === 'PIT').level, 'ok'); assert.equal(r.profile.kup, 'local');
+  const no2 = { ...old, pit: Math.round(pb * .12), netto: C.r2(brutto - zus - health - Math.round(pb * .12) - 10 + 22.95) };
+  assert.equal(C.slipCheck([{ month: '2026-10', kind: 'main', f: no2, ovt: {}, other: [] }], { young: false }).items.find(i => /PIT/.test(i.title)).level, 'warn');
+});
+
+t('дата зарплаты: до 10-го, выходные и опыт людей', () => {
+  // 10.11.2026 — вторник: 80% в понедельник 9-го, 100% к 10-му
+  assert.deepEqual(C.payday('2026-10').days, [{ day: '2026-11-09', p: .8 }, { day: '2026-11-10', p: 1 }]);
+  // 9 и 10 мая 2026 — выходные: деньги 8-го, в пятницу
+  assert.deepEqual(C.payday('2026-04').days, [{ day: '2026-05-08', p: 1 }]);
+  // 10.08.2026 — понедельник, накануне выходные: только 10-е
+  assert.deepEqual(C.payday('2026-07').days, [{ day: '2026-08-10', p: 1 }]);
+  // 10.10.2026 — суббота: срок пятница 9-го, 80% в четверг 8-го
+  assert.equal(C.payday('2026-09').deadline, '2026-10-09');
+  assert.equal(C.payday('2026-09').days[0].day, '2026-10-08');
+  // опыт: три месяца подряд в срок — вероятность «накануне» падает
+  const rep = { '2026-06': { '2026-07-10': 5 }, '2026-07': { '2026-08-10': 4 }, '2026-08': { '2026-09-10': 6, '2026-09-09': 1 } };
+  const p = C.payday('2026-10', rep);
+  assert.equal(p.src, 'data'); assert.equal(p.months, 3);
+  assert.ok(p.days[0].p < .5 && p.days[0].day === '2026-11-09');
+  // отметка позже срока не учит прогноз
+  assert.deepEqual(C.payday('2026-10', { '2026-09': { '2026-10-15': 1 } }).days, C.payday('2026-10').days);
+  // отметки за сам месяц — факт
+  assert.equal(C.payday('2026-09', { '2026-09': { '2026-10-08': 3, '2026-10-09': 1 } }).actual, '2026-10-08');
+});
+
 function r(x) { return Math.round(x * 100) / 100; }
 console.log(`\n${n} проверок пройдено`);
