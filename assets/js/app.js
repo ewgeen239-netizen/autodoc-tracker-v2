@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261027.1855';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261027.1909';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -215,9 +215,9 @@ function pushRank() {
   clearTimeout(_rankT);
   _rankT = setTimeout(() => {
     const m = C.monthKey(new Date()), s = C.monthSnapshot(DB.entries, m);
-    // В рейтинг — премия с обецностью, как на главной: без пропусков ×1,25
-    const bonus = C.r2(s.bonus * C.premiumFactor(autoHours(m).absences));
-    api('rank', { row: { month: m, name: DB.name || 'Аноним', emoji: DB.emoji, team: DB.team, group: DB.group, bonus, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
+    // В рейтинг — вся премия, как на главной: пики × обецность + Indirect
+    const indirect = indAmount(m), bonus = C.r2(s.bonus * C.premiumFactor(autoHours(m).absences) + indirect);
+    api('rank', { row: { month: m, name: DB.name || 'Аноним', emoji: DB.emoji, team: DB.team, group: DB.group, bonus, indirect, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
   }, 1500);
 }
 let _profT = null;
@@ -504,12 +504,14 @@ function renderHome() {
   $('plate-month').textContent = mLabel(mk);
   renderPlateCheck();
   renderIndirect();
-  const base = C.monthBonus(DB.entries, mk), absN = autoHours(mk).absences, pf = C.premiumFactor(absN);
-  // На главной премия сразу с множителем обецности: без пропусков ×1,25.
-  countUp($('plate-bonus'), C.r2(base * pf));
-  $('plate-cap').textContent = !base ? 'премия за пики в этом месяце'
-    : pf ? `премия за пики с обецностью: ${money(base)} × ${fx(pf)}${absN ? `, пропусков ${absN}` : ', без пропусков'}`
-    : `премии нет: ${absN} ${plural(absN, 'пропуск', 'пропуска', 'пропусков')} (без них было бы ${money(base * 1.25)} zł)`;
+  const base = C.monthBonus(DB.entries, mk), absN = autoHours(mk).absences, pf = C.premiumFactor(absN), ind = indAmount(mk);
+  // На главной вся премия: пики с множителем обецности (без пропусков ×1,25) + Indirect.
+  countUp($('plate-bonus'), C.r2(base * pf + ind));
+  const indTxt = ind ? ` + Indirect ${money(ind)}` : '';
+  $('plate-cap').textContent = !base && !ind ? 'премия за пики и Indirect в этом месяце'
+    : !base ? `премия Indirect за ${MONTHS[+mk.slice(5) - 1]}`
+    : pf ? `премия: пики ${money(base)} × ${fx(pf)}${indTxt}${absN ? `, пропусков ${absN}` : ', без пропусков'}`
+    : `за пики премии нет: ${absN} ${plural(absN, 'пропуск', 'пропуска', 'пропусков')}${indTxt} (без них было бы ${money(base * 1.25)} zł)`;
 
   const ns = nextShift(now), box = $('next-shift');
   if (!STATE.sched) box.innerHTML = `<div class="next-ic">📅</div><div><b>График не загрузился</b><small>Проверь интернет и открой приложение снова.</small></div>`;
@@ -956,7 +958,7 @@ function renderSlip(v, until, left, flash) {
     <div class="slip-top"><span>Wypłata за ${MONTHS[+v.W.slice(5) - 1]} ${v.W.slice(0, 4)}</span><span class="slip-due">до ${ud}.${um}, ${left} ${plural(left, 'день', 'дня', 'дней')}</span></div>
     <div class="slip-num"><span class="num" id="slip-netto" data-v="${STATE.slipV || 0}">0</span><small>zł</small></div>
     <div class="slip-sub">${v.dirty ? 'есть несохранённые правки, нажми «Обновить расчёт»' : v.saved ? `на руки, расчёт сохранён ${esc(fmtD((DB.wallet.cur.savedAt || '').slice(0, 10)))}` : 'черновик: проверь часы и нажми «Сохранить расчёт»'}</div>
-    <div class="slip-bonus${flash ? ' fresh' : ''}"><span>Премия за пики, брутто<br><small style="opacity:.75">${money(v.res.bonusBase)} × ${fx(v.res.premiumFactor)} — ${absText(v.res.premiumFactor, salaryInput(v.inp).absences)}</small></span><b>${money(v.res.parts.bonus)} zł</b></div>`;
+    <div class="slip-bonus${flash ? ' fresh' : ''}"><span>Премия, брутто<br><small style="opacity:.75">пики ${money(v.res.bonusBase)} × ${fx(v.res.premiumFactor)} — ${absText(v.res.premiumFactor, salaryInput(v.inp).absences)}${v.res.indirect ? ` + Indirect ${money(v.res.indirect)}` : ''}</small></span><b>${money(v.res.parts.bonus)} zł</b></div>`;
   countUp($('slip-netto'), v.res.netto); STATE.slipV = v.res.netto;
 }
 
@@ -1051,7 +1053,7 @@ function renderBreakdown(r) {
   $('wallet-break').innerHTML = `<h2 class="sec">Из чего складывается</h2><div class="card"><table class="tbl">
     ${row('Основные часы', r.parts.base, '', `${money(r.rate)} zł/ч`)}${row('Отпуск (urlop)', r.parts.urlop, '', r.urlopVar ? `${money(r.rate)} + ${money(r.urlopVar)} средних доплат = ${money(r.urlopRate)} zł/ч` : `${money(r.rate)} zł/ч`)}
     ${row('Ночная доплата', r.parts.night, '', `${money(r.nightRate)} zł за ночной час`)}${row('Сверхурочные +50%', r.parts.ovt50)}${row('Сверхурочные +100%', r.parts.ovt100)}
-    ${r.bonusBase ? row('Премия (zadaniowa, за пики)', r.parts.bonus, '', `${money(r.bonusBase)} × ${fx(r.premiumFactor)} за обецность`) : ''}${r.parts.indirect ? row('Премия Indirect', r.parts.indirect, '', 'сумма из pasku, главная → Indirect') : ''}${row('Dodatek DARK', r.parts.dark)}${row('Другие доплаты', r.parts.extra)}
+    ${r.parts.bonus ? row('Премия (zadaniowa)', r.parts.bonus, '', [r.bonusBase ? `пики ${money(r.bonusBase)} × ${fx(r.premiumFactor)} за обецность` : '', r.indirect ? `Indirect ${money(r.indirect)}` : ''].filter(Boolean).join(' + ')) : ''}${row('Dodatek DARK', r.parts.dark)}${row('Другие доплаты', r.parts.extra)}
     <tr class="tot"><td>Брутто</td><td>${money(r.brutto)}</td></tr>
     ${row('ZUS: пенсионный, рентовый, больничный', r.zus, 'minus', '13,71% от брутто')}
     ${row('Składka zdrowotna', r.health, 'minus', '9% от брутто без ZUS')}
@@ -1090,6 +1092,7 @@ function walletLive() {
 // Сумма и часы без имени уходят на сервер — из них складывается средняя
 // ставка Indirect за час по складу.
 const indirectFor = mk => DB.indirect.find(x => x.month === mk) || null;
+const indAmount = mk => (indirectFor(mk) || {}).amount || 0;
 const indRate = x => x && x.hours > 0 ? C.r2(x.amount / x.hours) : 0;
 // Месяц по умолчанию: текущий, а до 10-го — прошлый (премию узнают из pasku).
 const indMonthDefault = () => C.walletMonth();
@@ -1155,6 +1158,7 @@ function indSave(del) {
   DB.indirect.sort((a, b) => (a.month < b.month ? -1 : 1)); DB.indirect = DB.indirect.slice(-24);
   save(); haptic.ok(); closeSheet();
   if (STATE.verified) api('indirect', { month: mk, amount: del ? 0 : amount, hours: del ? 0 : hours }).then(() => loadIndStats(true)).catch(() => {});
+  pushRank(); renderHome();
   toast(del ? 'Indirect за месяц удалён' : `Indirect: ${money(amount)} zł, ${money(C.r2(amount / hours))} zł/ч — добавлено в кошелёк`);
   renderIndirect();
 }
@@ -1181,9 +1185,9 @@ function trackerNetto(mk) {
   return autoHours(mk).has ? C.salary(salaryInput(autoInp(mk))).netto : 0;
 }
 function slipCtx(mk) {
-  const a = autoHours(mk), base = bonusFor(mk), pf = C.premiumFactor(a.absences), ys = youngFor(mk);
+  const a = autoHours(mk), base = bonusFor(mk), pf = C.premiumFactor(a.absences), ys = youngFor(mk), ind = indAmount(mk);
   return { young: ys.status === 'yes' || ys.status === 'partial' ? true : ys.status === 'no' ? false : null, team: DB.team,
-    tracker: { bonusBase: C.r2(base), bonus: C.r2(base * pf), pf, has: a.has, hours: a.hours, urlopHours: a.urlop, netto: trackerNetto(mk) } };
+    tracker: { bonusBase: C.r2(base), bonus: C.r2(base * pf + ind), pf, indirect: ind, has: a.has, hours: a.hours, urlopHours: a.urlop, netto: trackerNetto(mk) } };
 }
 const slipResultOf = mk => { const ss = slipsOf(mk); return ss.length ? C.slipCheck(ss, slipCtx(mk)) : null; };
 const slipLevel = mk => (slipResultOf(mk) || {}).level || null;
@@ -1399,7 +1403,7 @@ function monthStats(mk) {
   const urlopMarked = Object.keys(DB.urlop[mk] || {}).length;
   const live = DB.entries.some(e => e.shiftDate.slice(0, 7) === mk);
   const snap = live ? C.monthSnapshot(DB.entries, mk) : DB.archive[mk] || null;
-  const base = snap ? snap.bonus : 0, pf = C.premiumFactor(a.absences);
+  const base = snap ? snap.bonus : 0, pf = C.premiumFactor(a.absences), ind = indAmount(mk);
   const ov = DB.ovt.filter(o => o.date.slice(0, 7) === mk);
   // Вся сумма за месяц: сохранённый расчёт кошелька, иначе расчёт по графику и отметкам
   const saved = DB.wallet.hist.find(h => h.month === mk);
@@ -1414,7 +1418,7 @@ function monthStats(mk) {
     urlopDays: p ? urlopDays : urlopMarked, urlopHours: a.urlop, absences: a.absences,
     holidays: p ? Object.keys(p.holidays).length : 0,
     ovtHours: ov.reduce((s, o) => s + o.hours, 0), ovt50: a.o50, ovt100: a.o100,
-    peaks: snap ? snap.peaks : 0, ppc: snap ? snap.ppc : 0, base, pf, premium: C.r2(base * pf), pay };
+    peaks: snap ? snap.peaks : 0, ppc: snap ? snap.ppc : 0, base, pf, ind, premium: C.r2(base * pf + ind), pay };
 }
 
 function renderArchive() {
@@ -1436,7 +1440,7 @@ function renderArchive() {
         ${cell('🌙', 'Ночных', t.night ? `${h1(t.night)} ч` : '—')}
         ${cell('🎉', 'Праздники', t.holidays ? `${t.holidays}` : '—')}
         ${cell('📦', 'Пики', t.peaks ? int(t.peaks) : '—', t.peaks ? `темп ${h1(t.ppc)}` : '')}
-        ${cell('⭐', 'Премия', t.base ? `${money(t.base)}` : '—', t.base ? `× ${fx(t.pf)} = ${money(t.premium)} zł` : '')}
+        ${cell('⭐', 'Премия', t.premium ? money(t.premium) : '—', [t.base ? `пики ${money(t.base)} × ${fx(t.pf)}` : '', t.ind ? `Indirect ${money(t.ind)}` : ''].filter(Boolean).join(' + '))}
         ${cell('🧾', 'Вычеты', money(Math.max(0, t.pay.brutto - t.pay.netto)), 'ZUS, здоровье, PIT')}
       </div></div>`;
   }).join('') || '<div class="empty"><b>Пока пусто</b>Итоги появятся, когда начнёшь записывать смены.</div>';

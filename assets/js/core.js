@@ -212,7 +212,8 @@
    *    absences (пропуски за месяц: премия ×1,25 / ×0,8 / 0 — см. premiumFactor),
    *    dark (Dodatek DARK, брутто), ekw (эквиваленты за одежду/стирку — без налога),
    *    deduct (удержания из «на руки»: benefit и т.п.), ytd (брутто с начала года до месяца — для лимита ulga),
-   *    bonus (премия за пики, брутто), indirect (премия Indirect, брутто, как в pasku),
+   *    bonus (премия за пики, брутто), indirect (премия Indirect из pasku — входит в премию,
+ *    множитель обецности на неё не действует),
  *    extra (прочие доплаты брутто),
    *    young:true|false, kup:'local'|'commute', pit2:true|false, ppk:true|false,
    *    nightBasis:'min'|'own'
@@ -238,8 +239,8 @@
       night: r2((nightH + oNight) * nightRate),
       ovt50: r2(o50 * rate * 1.5),
       ovt100: r2(o100 * rate * 2),
-      bonus: r2(Math.max(0, +inp.bonus || 0) * premiumFactor(inp.absences)),
-      indirect: r2(Math.max(0, +inp.indirect || 0)),
+      // премия = пики × обецность + Indirect (сумма из pasku как есть)
+      bonus: r2(Math.max(0, +inp.bonus || 0) * premiumFactor(inp.absences) + Math.max(0, +inp.indirect || 0)),
       dark: r2(Math.max(0, +inp.dark || 0)),
       extra: r2(Math.max(0, +inp.extra || 0)),
     };
@@ -266,6 +267,7 @@
     return { month: mk, rate, nominal: nom, minHourly: r2(minHourly), nightRate: r2(nightRate),
              urlopVar: r2(urlopVar), urlopRate: r2(urlopRate),
              bonusBase: r2(Math.max(0, +inp.bonus || 0)), premiumFactor: premiumFactor(inp.absences),
+             bonusPeaks: r2(Math.max(0, +inp.bonus || 0) * premiumFactor(inp.absences)), indirect: r2(Math.max(0, +inp.indirect || 0)),
              parts, brutto, zus, zusParts, health, ppkEmp, ppkEr, kup, pitBase, pit, ekw, deduct, netto,
              young: !!inp.young, taxable: r2(taxable), exemptLeft: r2(exemptLeft) };
   }
@@ -292,7 +294,7 @@
   // Переменная часть одного месяца из результата salary(): премия, сверхурочные
   // целиком, ночные и Dodatek DARK (так считает AutoDoc).
   const variableOf = (res, inp) => ({
-    var: r2(res.parts.night + res.parts.ovt50 + res.parts.ovt100 + res.parts.bonus + res.parts.indirect + res.parts.dark + res.parts.extra),
+    var: r2(res.parts.night + res.parts.ovt50 + res.parts.ovt100 + res.parts.bonus + res.parts.dark + res.parts.extra),
     hours: (+inp.hours || 0) + (+inp.ovt50 || 0) + (+inp.ovt100 || 0),
   });
 
@@ -332,7 +334,7 @@
   // ── проверка odcinka ──────────────────────────────────────────────
   // slips — все odcinki одного месяца работы (główna + korekty), разобранные
   // slip.js: { kind, f: {brutto, zus, health, …}, ovt, other }.
-  // ctx: { young: true|false|null, team, rate, tracker: { bonus, bonusBase, pf,
+  // ctx: { young: true|false|null, team, rate, tracker: { bonus, bonusBase, pf, indirect,
   //        hours, urlopHours, netto, has } } — что насчитал сам трекер.
   // Возвращает пункты проверки (ok | info | warn | bad) и общий итог.
   const near = (a, b, tol = .02) => Math.abs(a - b) <= tol + 1e-9;
@@ -421,11 +423,13 @@
     const sum = k => r2(slips.reduce((s, x) => s + (x.f[k] || 0), 0));
     const bonus = sum('bonus'), netto = sum('netto'), brutto = sum('brutto');
     const t = ctx.tracker || {};
-    if (t.bonusBase > 0) {
+    // премия трекера = пики × обецность + Indirect
+    const how = () => [t.bonusBase > 0 ? `пики ${fmt(t.bonusBase)} × ${String(t.pf).replace('.', ',')}` : '', t.indirect > 0 ? `Indirect ${fmt(t.indirect)}` : ''].filter(Boolean).join(' + ');
+    if (t.bonus > 0) {
       const diff = r2(bonus - t.bonus), tol = Math.max(1, t.bonus * .005);
-      if (diff >= -tol) add('ok', 'Премия за пики', `${fmt(bonus)} zł, трекер насчитал ${fmt(t.bonus)} zł (${fmt(t.bonusBase)} × ${String(t.pf).replace('.', ',')})${diff > tol ? `, выплатили на ${fmt(diff)} zł больше` : ''}`);
-      else add('bad', 'Премия недоплачена', `в odcinku ${fmt(bonus)} zł, по твоим пикам ${fmt(t.bonus)} zł (${fmt(t.bonusBase)} × ${String(t.pf).replace('.', ',')}). Не хватает ${fmt(-diff)} zł — спроси у лидера или жди korektę.`);
-    } else if (bonus) add('info', 'Премия за пики', `${fmt(bonus)} zł. В трекере нет пиков за этот месяц — сравнить не с чем.`);
+      if (diff >= -tol) add('ok', 'Премия', `${fmt(bonus)} zł, трекер насчитал ${fmt(t.bonus)} zł (${how()})${diff > tol ? `, выплатили на ${fmt(diff)} zł больше` : ''}`);
+      else add('bad', 'Премия недоплачена', `в odcinku ${fmt(bonus)} zł, по трекеру ${fmt(t.bonus)} zł (${how()}). Не хватает ${fmt(-diff)} zł — спроси у лидера или жди korektę.`);
+    } else if (bonus) add('info', 'Премия', `${fmt(bonus)} zł. В трекере нет пиков и Indirect за этот месяц — сравнить не с чем.`);
     if (t.has && f.hours !== undefined) {
       const sh = r2((f.hours || 0) + (f.urlopHours || 0)), th = r2((t.hours || 0) + (t.urlopHours || 0));
       Math.abs(sh - th) <= 1 ? add('ok', 'Часы по графику', `${fmt(sh)} ч, как в графике трекера`)

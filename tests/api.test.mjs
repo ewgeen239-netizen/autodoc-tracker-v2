@@ -126,4 +126,13 @@ await t('indirect_stats: средняя ставка и медиана без ui
     assert.ok(!JSON.stringify(j).includes('uid'));
   } finally { globalThis.fetch = real; }
 });
+await t('rank: Indirect в премии — только сколько записано на сервере', async () => {
+  const M = new Date().toISOString().slice(0, 7), real = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => new Response(String(url).includes('/indirect?') ? JSON.stringify([{ amount: 900 }]) : '', { status: 201 });
+  try {
+    const row = { month: M, peaks: 0, hours: 8, shifts: 1, indirect: 900 };
+    assert.equal((await post({ initData: initData({ ...me, id: 794 }), action: 'rank', row: { ...row, bonus: 900 } })).status, 200);
+    assert.equal((await post({ initData: initData({ ...me, id: 795 }), action: 'rank', row: { ...row, bonus: 5000, indirect: 5000 } })).status, 422);
+  } finally { globalThis.fetch = real; }
+});
 console.log(`\n${n} проверок пройдено`);

@@ -179,9 +179,16 @@ Deno.serve(async (req) => {
         const shifts = Math.round(num(r.shifts, 0, 31));
         const bonus = num(r.bonus, 0, 20_000);
         const ppc = hours > 0 ? peaks / hours : 0;
+        // Премия в рейтинге = пики × обецность + Indirect. Indirect берём из своей
+        // таблицы (его пишет action indirect), а не со слов клиента.
+        let indirect = 0;
+        if (Number(r.indirect) > 0) {
+          const ir = await db(`indirect?uid=eq.${uid}&month=eq.${month}&select=amount&limit=1`);
+          if (ir.ok) indirect = Number((await ir.json())[0]?.amount ?? 0) || 0;
+        }
         // правдоподобие: самая щедрая ставка — 0,74 zł за штуку сверх нормы,
         // плюс 25% за обецность (премия в рейтинге — с этим множителем)
-        if (bonus > peaks * 0.74 * 1.25 + 0.01 || ppc > 600 || hours > shifts * 16 + 0.01)
+        if (bonus > peaks * 0.74 * 1.25 + indirect + 0.01 || ppc > 600 || hours > shifts * 16 + 0.01)
           return json({ error: "implausible" }, 422);
         const row = {
           uid, month, pub: await pubId(uid),

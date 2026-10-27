@@ -98,10 +98,12 @@ t('премия за обецность: 0 пропусков ×1,25, 1 — ×0,
   assert.equal(C.salary({ ...base, absences: 0 }).bonusBase, 400);
 });
 
-t('премия Indirect: в брутто, облагается, переменная часть для отпускных', () => {
+t('премия Indirect: входит в премию, облагается, переменная часть для отпускных', () => {
   const base = { month: '2026-10', rate: 30, hours: 100 };
   const a = C.salary(base), b = C.salary({ ...base, indirect: 450, absences: 2 });
-  assert.equal(b.parts.indirect, 450);                       // обецность премию за пики режет, Indirect вводится как есть
+  assert.equal(b.parts.bonus, 450);                          // обецность премию за пики режет, Indirect вводится как есть
+  const c = C.salary({ ...base, bonus: 400, indirect: 450, absences: 0 });
+  assert.equal(c.parts.bonus, 950); assert.equal(c.bonusPeaks, 500); assert.equal(c.indirect, 450);
   assert.equal(C.r2(b.brutto - a.brutto), 450);
   assert.ok(b.zus > a.zus && b.pit > a.pit);
   assert.equal(C.variableOf(b, { hours: 100 }).var, 450);
@@ -208,6 +210,11 @@ t('odcinek: налоги сходятся, недоплата премии ви�
   const low = C.slipCheck([{ month: '2026-10', kind: 'main', f, ovt: {}, other: [] }], { young: true, tracker: { bonusBase: 480, bonus: 600, pf: 1.25 } });
   assert.equal(low.level, 'bad');
   assert.match(low.items.find(i => i.level === 'bad').text, /100,00 zł/);
+  // Indirect тоже в премии: 480 × 1,25 + 100 = 700, в odcinku 500 — не хватает 200
+  const ind = C.slipCheck([{ month: '2026-10', kind: 'main', f, ovt: {}, other: [] }], { young: true, tracker: { bonusBase: 480, bonus: 700, pf: 1.25, indirect: 100 } });
+  assert.match(ind.items.find(i => i.level === 'bad').text, /Indirect 100,00.*Не хватает 200,00 zł/);
+  const onlyInd = C.slipCheck([{ month: '2026-10', kind: 'main', f, ovt: {}, other: [] }], { young: true, tracker: { bonusBase: 0, bonus: 500, pf: 1.25, indirect: 500 } });
+  assert.equal(onlyInd.items.find(i => i.title === 'Премия').level, 'ok');
   // 26+: PIT = 12% от базы − 300; без PIT-2 — предупреждение
   const pb = Math.round(hb - 250), pit = Math.round(pb * .12 - 300);
   const old = { ...f, pitBase: pb, pit, netto: C.r2(brutto - zus - health - pit - 10 + 22.95) };
