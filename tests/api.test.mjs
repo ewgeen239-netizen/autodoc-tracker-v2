@@ -104,4 +104,26 @@ await t('paydays: наружу только счётчики по датам', a
     assert.ok(!JSON.stringify(j).includes('uid'));
   } finally { globalThis.fetch = real; }
 });
+await t('indirect: сумма и часы с доверенным uid, неправдоподобное — 422', async () => {
+  const M = new Date().toISOString().slice(0, 7);
+  assert.equal((await post({ initData: initData({ ...me, id: 788 }), action: 'indirect', month: M, amount: 5000, hours: 10 })).status, 422);
+  calls.length = 0;
+  const r = await post({ initData: initData({ ...me, id: 789 }), action: 'indirect', month: M, amount: 900, hours: 60, uid: '1' });
+  assert.equal(r.status, 200);
+  const w = calls.find(c => c.url.includes('/indirect'));
+  assert.equal(w.body.uid, '789'); assert.equal(w.body.amount, 900); assert.equal(w.body.hours, 60);
+  calls.length = 0;
+  assert.equal((await post({ initData: initData({ ...me, id: 792 }), action: 'indirect', month: M, amount: 0, hours: 0 })).status, 200);
+  assert.equal(calls.find(c => c.url.includes('/indirect')).method, 'DELETE');
+});
+await t('indirect_stats: средняя ставка и медиана без uid', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async url => new Response(JSON.stringify(String(url).includes('/indirect')
+    ? [{ month: '2026-09', amount: 600, hours: 60 }, { month: '2026-09', amount: 1200, hours: 80 }, { month: '2026-09', amount: 300, hours: 20 }] : []), { status: 200 });
+  try {
+    const j = await (await post({ initData: initData({ ...me, id: 793 }), action: 'indirect_stats' })).json();
+    assert.deepEqual(j.months['2026-09'], { n: 3, rate: 13.13, median: 15, hours: 160 });   // 2100 / 160; ставки 10, 15, 15
+    assert.ok(!JSON.stringify(j).includes('uid'));
+  } finally { globalThis.fetch = real; }
+});
 console.log(`\n${n} проверок пройдено`);

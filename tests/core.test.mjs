@@ -98,6 +98,15 @@ t('премия за обецность: 0 пропусков ×1,25, 1 — ×0,
   assert.equal(C.salary({ ...base, absences: 0 }).bonusBase, 400);
 });
 
+t('премия Indirect: в брутто, облагается, переменная часть для отпускных', () => {
+  const base = { month: '2026-10', rate: 30, hours: 100 };
+  const a = C.salary(base), b = C.salary({ ...base, indirect: 450, absences: 2 });
+  assert.equal(b.parts.indirect, 450);                       // обецность премию за пики режет, Indirect вводится как есть
+  assert.equal(C.r2(b.brutto - a.brutto), 450);
+  assert.ok(b.zus > a.zus && b.pit > a.pit);
+  assert.equal(C.variableOf(b, { hours: 100 }).var, 450);
+});
+
 t('номинальные часы 2026', () => {
   assert.equal(C.nominalHours('2026-01'), 160);   // 1 и 6 января — будни
   assert.equal(C.nominalHours('2026-10'), 176);

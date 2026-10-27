@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261015.1849';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261027.1855';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -53,7 +53,7 @@ function defaults() {
   return {
     v: 2, uid: '', name: '', emoji: '👷', photo: '', team: 'dark', group: 'A', teamAt: 0,
     ws: 'mon', theme: 'auto', consent: null, mainSt: MAIN_ST.slice(),
-    entries: [], archive: {}, notes: [], urlop: {}, absent: {}, ovt: [], slips: [],
+    entries: [], archive: {}, notes: [], urlop: {}, absent: {}, ovt: [], slips: [], indirect: [],
     profile: { birth: '', birthOk: false, rateMode: '33.00', rate: 33.00, kup: 'local', pit2: true, ppk: false, nightBasis: 'min', extra: 0,
       dark: 300, ekw: 22.95, deduct: 0 },
     wallet: { cur: null, draft: null, hist: [] },
@@ -91,6 +91,11 @@ function sanitize(raw) {
     id: fin(o.id, 0, 9e15, Date.now()), date: o.date, hours: fin(o.hours, 0, 16), pct: o.pct === 50 ? 50 : 100, night: !!o.night,
   })).filter(o => o.hours > 0);
   d.slips = (Array.isArray(raw.slips) ? raw.slips : []).map(cleanSlip).filter(Boolean).slice(-36);
+  const indSeen = new Set();
+  d.indirect = (Array.isArray(raw.indirect) ? raw.indirect : []).filter(x => x && RE_MK.test(x.month)).reverse()
+    .filter(x => !indSeen.has(x.month) && indSeen.add(x.month))
+    .map(x => ({ month: x.month, amount: fin(x.amount, 0, 20000), hours: fin(x.hours, 0, 400), at: str(x.at, 40) }))
+    .filter(x => x.amount > 0 && x.hours > 0).reverse().slice(-24);
   const p = raw.profile || {};
   d.profile = {
     birth: RE_DAY.test(p.birth) ? p.birth : '', birthOk: !!p.birthOk && RE_DAY.test(p.birth),
@@ -187,7 +192,7 @@ async function cloudRestore() {
 }
 
 // ═════════════════════ СЕТЬ ═════════════════════
-const STATE = { verified: false, uid: '', server: false, sched: null, tab: 'home', stack: [], curSt: 'os', calY: 0, calM: 0, rankMonth: null, schedTab: 'cal', paydays: null, paydaysAt: 0, slipView: null, slipErr: '' };
+const STATE = { verified: false, uid: '', server: false, sched: null, tab: 'home', stack: [], curSt: 'os', calY: 0, calM: 0, rankMonth: null, schedTab: 'cal', indStats: null, indAt: 0, paydays: null, paydaysAt: 0, slipView: null, slipErr: '' };
 
 async function api(action, payload = {}, timeout = 9000) {
   if (!IN_TG) throw new Error('no-tg');
@@ -498,6 +503,7 @@ function renderHome() {
   $('plate-code').textContent = code;
   $('plate-month').textContent = mLabel(mk);
   renderPlateCheck();
+  renderIndirect();
   const base = C.monthBonus(DB.entries, mk), absN = autoHours(mk).absences, pf = C.premiumFactor(absN);
   // На главной премия сразу с множителем обецности: без пропусков ×1,25.
   countUp($('plate-bonus'), C.r2(base * pf));
@@ -891,7 +897,7 @@ function monthVariable(mk) {
   const a = autoHours(mk);
   if (!a.has || !a.hours) return null;
   const inp = { month: mk, hours: a.hours, nightHours: a.night, ovt50: a.o50, ovt100: a.o100, ovtNight: a.oN, absences: a.absences };
-  const r = C.salary({ ...inp, rate: currentRate(), bonus: bonusFor(mk), dark: darkFor(), nightBasis: DB.profile.nightBasis });
+  const r = C.salary({ ...inp, rate: currentRate(), bonus: bonusFor(mk), indirect: (indirectFor(mk) || {}).amount || 0, dark: darkFor(), nightBasis: DB.profile.nightBasis });
   return { ...C.variableOf(r, inp), src: 'est' };
 }
 // Средняя доплата к часу отпуска: 3 месяца по дате выплаты (работа W-4…W-2).
@@ -911,7 +917,7 @@ const r2s = n => Math.round(n * 100) / 100;
 function salaryInput(inp) {
   const p = DB.profile, ys = youngFor(inp.month);
   return { ...inp, urlopVar: inp.urlopVar ?? urlopAuto(inp.month).perHour,
-    rate: currentRate(), bonus: bonusFor(inp.month), extra: p.extra, dark: darkFor(), ekw: p.ekw, deduct: p.deduct,
+    rate: currentRate(), bonus: bonusFor(inp.month), indirect: (indirectFor(inp.month) || {}).amount || 0, extra: p.extra, dark: darkFor(), ekw: p.ekw, deduct: p.deduct,
     ytd: inp.ytd ?? ytdAuto(inp.month),
     absences: inp.absences ?? autoHours(inp.month).absences,
     young: ys.status === 'yes' || ys.status === 'partial', kup: p.kup, pit2: p.pit2, ppk: p.ppk, nightBasis: p.nightBasis };
@@ -1045,7 +1051,7 @@ function renderBreakdown(r) {
   $('wallet-break').innerHTML = `<h2 class="sec">Из чего складывается</h2><div class="card"><table class="tbl">
     ${row('Основные часы', r.parts.base, '', `${money(r.rate)} zł/ч`)}${row('Отпуск (urlop)', r.parts.urlop, '', r.urlopVar ? `${money(r.rate)} + ${money(r.urlopVar)} средних доплат = ${money(r.urlopRate)} zł/ч` : `${money(r.rate)} zł/ч`)}
     ${row('Ночная доплата', r.parts.night, '', `${money(r.nightRate)} zł за ночной час`)}${row('Сверхурочные +50%', r.parts.ovt50)}${row('Сверхурочные +100%', r.parts.ovt100)}
-    ${r.bonusBase ? row('Премия (zadaniowa, за пики)', r.parts.bonus, '', `${money(r.bonusBase)} × ${fx(r.premiumFactor)} за обецность`) : ''}${row('Dodatek DARK', r.parts.dark)}${row('Другие доплаты', r.parts.extra)}
+    ${r.bonusBase ? row('Премия (zadaniowa, за пики)', r.parts.bonus, '', `${money(r.bonusBase)} × ${fx(r.premiumFactor)} за обецность`) : ''}${r.parts.indirect ? row('Премия Indirect', r.parts.indirect, '', 'сумма из pasku, главная → Indirect') : ''}${row('Dodatek DARK', r.parts.dark)}${row('Другие доплаты', r.parts.extra)}
     <tr class="tot"><td>Брутто</td><td>${money(r.brutto)}</td></tr>
     ${row('ZUS: пенсионный, рентовый, больничный', r.zus, 'minus', '13,71% от брутто')}
     ${row('Składka zdrowotna', r.health, 'minus', '9% от брутто без ZUS')}
@@ -1076,6 +1082,81 @@ function walletLive() {
   const r = C.salary(salaryInput(inp));
   countUp($('slip-netto'), r.netto); STATE.slipV = r.netto;
   renderBreakdown(r);
+}
+
+// ═════════════════════ INDIRECT ═════════════════════
+// Премия Indirect (процессы поддержки: Doki, Migracja, Operator wózka…) не
+// считается по пикам: человек вписывает сумму из pasku и часы на Indirect.
+// Сумма и часы без имени уходят на сервер — из них складывается средняя
+// ставка Indirect за час по складу.
+const indirectFor = mk => DB.indirect.find(x => x.month === mk) || null;
+const indRate = x => x && x.hours > 0 ? C.r2(x.amount / x.hours) : 0;
+// Месяц по умолчанию: текущий, а до 10-го — прошлый (премию узнают из pasku).
+const indMonthDefault = () => C.walletMonth();
+
+async function loadIndStats(force) {
+  if (!STATE.verified || STATE.indBusy || (!force && STATE.indStats && Date.now() - STATE.indAt < 600000)) return;
+  STATE.indBusy = true;
+  try {
+    const j = await api('indirect_stats', {});
+    if (j && j.months && typeof j.months === 'object') {
+      STATE.indStats = j.months; STATE.indAt = Date.now();
+      if ((STATE.stack[STATE.stack.length - 1] || STATE.tab) === 'home') renderIndirect();
+    }
+  } catch {} finally { STATE.indBusy = false; }
+}
+// Свежий месяц, где у склада есть данные: сначала выбранный, потом назад.
+function indCommunity(mk) {
+  const st = STATE.indStats || {};
+  for (let i = 0; i < 4; i++) { const m = C.addMonths(mk, -i), x = st[m]; if (x && x.n > 0 && x.rate > 0) return { ...x, month: m }; }
+  return null;
+}
+
+function renderIndirect() {
+  const el = $('ind-bar'); if (!el) return;
+  const mk = indMonthDefault(), mine = indirectFor(mk), com = indCommunity(mk);
+  el.innerHTML = `<span class="ind-ic" aria-hidden="true">${mine ? 'ID' : '＋'}</span>
+    <span class="ind-b"><b>Indirect${mine ? ` · ${MONTHS[+mk.slice(5) - 1]}` : ''}</b><small>${mine ? `${money(mine.amount)} zł · ${h1(mine.hours)} ч · ${money(indRate(mine))}/ч` : 'добавь премию и часы на Indirect'}</small></span>
+    <span class="ind-r">${com ? `${money(com.rate)}<small>zł/ч, склад · ${com.n}</small>` : '<small>ставка склада<br>появится скоро</small>'}</span>`;
+  loadIndStats();
+}
+
+function indSheet(mk) {
+  STATE.indMonth = mk;
+  const cur = indirectFor(mk), com = indCommunity(mk), opts = [C.addMonths(C.monthKey(new Date()), -1), C.monthKey(new Date())];
+  sheet(`<h3>Премия Indirect</h3>
+    <p>Для работы на процессах поддержки: Doki, Migracja, Odpady, Operator wózka, Problem Solver и др. Впиши сумму премии из pasku и сколько часов был на Indirect — трекер посчитает ставку за час и добавит премию в кошелёк.</p>
+    <div class="chips" style="margin:4px 0 12px">${opts.map(m => `<button class="chip${m === mk ? ' on' : ''}" data-act="ind-month" data-v="${m}">${cap(MONTHS[+m.slice(5) - 1])}${indirectFor(m) ? ' ✓' : ''}</button>`).join('')}</div>
+    <div class="grid2">
+      <label class="field"><span>Премия, zł брутто</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="20000" id="ind-a" value="${cur ? cur.amount : ''}" placeholder="850" data-in="ind"></label>
+      <label class="field"><span>Часов на Indirect</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" max="400" id="ind-h" value="${cur ? cur.hours : ''}" placeholder="96" data-in="ind"></label>
+    </div>
+    <div class="ind-prev" id="ind-prev"></div>
+    <p class="hint">Сумма и часы без имени попадут в общую статистику — так считается средняя ставка Indirect за час по складу${com ? `: сейчас ${money(com.rate)} zł/ч у ${com.n} ${plural(com.n, 'человека', 'человек', 'человек')} (${MONTHS[+com.month.slice(5) - 1]})` : ''}.</p>
+    <div class="stack"><button class="btn btn-acc btn-wide" data-act="ind-save">Сохранить</button>
+    ${cur ? '<button class="btn btn-ghost btn-wide" data-act="ind-del">Удалить за этот месяц</button>' : '<button class="btn btn-ghost btn-wide" data-act="sheet-close">Отмена</button>'}</div>`);
+  indPreview();
+}
+function indPreview() {
+  const box = $('ind-prev'); if (!box) return;
+  const a = Number(String($('ind-a').value).replace(',', '.')) || 0, h = Number(String($('ind-h').value).replace(',', '.')) || 0;
+  const com = indCommunity(STATE.indMonth);
+  if (!(a > 0 && h > 0)) { box.innerHTML = ''; return; }
+  const r = C.r2(a / h), d = com ? C.r2(r - com.rate) : 0;
+  box.innerHTML = `<div><span>Твоя ставка</span><b>${money(r)} zł/ч</b></div>${com ? `<div><span>Склад в среднем</span><b>${money(com.rate)} zł/ч</b></div><div><span>Разница</span><b class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '+' : '−'}${money(Math.abs(d))}</b></div>` : ''}`;
+}
+function indSave(del) {
+  const mk = STATE.indMonth, num = id => Number(String($(id)?.value || '').replace(',', '.')) || 0;
+  const amount = del ? 0 : Math.min(20000, Math.max(0, num('ind-a'))), hours = del ? 0 : Math.min(400, Math.max(0, num('ind-h')));
+  if (!del && !(amount > 0 && hours > 0)) { haptic.err(); toast('Впиши сумму и часы'); return; }
+  if (!del && amount / hours > 80) { haptic.err(); toast('Больше 80 zł за час — проверь сумму и часы'); return; }
+  DB.indirect = DB.indirect.filter(x => x.month !== mk);
+  if (!del) DB.indirect.push({ month: mk, amount: C.r2(amount), hours: Math.round(hours * 10) / 10, at: new Date().toISOString() });
+  DB.indirect.sort((a, b) => (a.month < b.month ? -1 : 1)); DB.indirect = DB.indirect.slice(-24);
+  save(); haptic.ok(); closeSheet();
+  if (STATE.verified) api('indirect', { month: mk, amount: del ? 0 : amount, hours: del ? 0 : hours }).then(() => loadIndStats(true)).catch(() => {});
+  toast(del ? 'Indirect за месяц удалён' : `Indirect: ${money(amount)} zł, ${money(C.r2(amount / hours))} zł/ч — добавлено в кошелёк`);
+  renderIndirect();
 }
 
 // ═════════════════════ ODCINEK ═════════════════════
@@ -1527,6 +1608,10 @@ const ACT = {
     toast('Данные удалены'); go('home'); renderAll(); }),
   'reverify': el => reverify(el),
   'slip-pick': () => { $('slip-file').click(); },
+  'ind-open': () => { haptic.pick(); indSheet(indMonthDefault()); loadIndStats(); },
+  'ind-month': el => { haptic.pick(); indSheet(el.dataset.v); },
+  'ind-save': () => indSave(false),
+  'ind-del': () => indSave(true),
   'slip-view': el => { STATE.slipView = el.dataset.m; STATE.slipErr = ''; haptic.pick();
     if (STATE.stack[STATE.stack.length - 1] !== 'odcinek') go('odcinek');
     else renderOdcinek();
@@ -1562,6 +1647,7 @@ document.addEventListener('input', e => {
   const k = e.target.dataset.in; if (!k) return;
   if (k === 'qa') qaUpdate(e);
   else if (k === 'w') walletLive();
+  else if (k === 'ind') indPreview();
   else if (k === 'pf') { DB.name = e.target.value.trim().slice(0, 40); save(); renderHeader(); pushRank(); pushProfile(); }
 });
 $('sheet-bg').addEventListener('click', e => { if (e.target.id === 'sheet-bg') closeSheet(); });

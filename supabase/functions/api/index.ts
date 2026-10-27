@@ -12,6 +12,8 @@
 //   ics      — личная ссылка на календарь
 //   payday   — когда пришла зарплата за месяц (только дата, без сумм)
 //   paydays  — сколько человек отметили какую дату: из этого прогноз зарплаты
+//   indirect — премия Indirect за месяц: сумма и часы (без имени в выдаче)
+//   indirect_stats — средняя ставка Indirect за час по складу
 // GET ?ics=<token> — лента смен для календаря телефона.
 //
 // Deploy:  supabase functions deploy api --no-verify-jwt
@@ -263,6 +265,45 @@ Deno.serve(async (req) => {
           m[x.paid_on] = (m[x.paid_on] ?? 0) + 1;
         }
         return json({ ok: true, reports });
+      }
+
+      case "indirect": {
+        // Сумма премии Indirect из pasku и часы на Indirect. 0 и 0 — снять отметку.
+        const month = String(body.month ?? "");
+        if (!monthOk(month)) return json({ error: "bad month" }, 400);
+        const amount = Math.round(num(body.amount, 0, 20_000) * 100) / 100;
+        const hours = Math.round(num(body.hours, 0, 400) * 10) / 10;
+        if (!amount && !hours) {
+          const d = await db(`indirect?uid=eq.${uid}&month=eq.${month}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+          return d.ok ? json({ ok: true }) : json({ error: "db" }, 500);
+        }
+        // правдоподобие: от 1 часа и не дороже 80 zł за час
+        if (hours < 1 || amount <= 0 || amount / hours > 80) return json({ error: "implausible" }, 422);
+        const row = { uid, month, amount, hours, updated_at: new Date().toISOString() };
+        const res = await db("indirect", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(row) });
+        return res.ok ? json({ ok: true }) : json({ error: "db" }, 500);
+      }
+
+      case "indirect_stats": {
+        // По месяцам: сколько человек, общая ставка (сумма ÷ часы) и медиана
+        // личных ставок. Кто сколько получил — наружу не уходит.
+        const now = new Date(), since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 12, 1)).toISOString().slice(0, 7);
+        const r = await db(`indirect?month=gte.${since}&select=month,amount,hours&limit=20000`);
+        if (!r.ok) return json({ error: "db" }, 500);
+        const by: Record<string, { a: number; h: number; rates: number[] }> = {};
+        for (const x of (await r.json()) as { month: string; amount: number; hours: number }[]) {
+          const a = Number(x.amount), h = Number(x.hours);
+          if (!(a > 0 && h > 0)) continue;
+          const m = (by[x.month] ??= { a: 0, h: 0, rates: [] });
+          m.a += a; m.h += h; m.rates.push(a / h);
+        }
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const months: Record<string, { n: number; rate: number; median: number; hours: number }> = {};
+        for (const [m, v] of Object.entries(by)) {
+          const s = v.rates.sort((x, y) => x - y), k = s.length;
+          months[m] = { n: k, rate: r2(v.a / v.h), median: r2(k % 2 ? s[(k - 1) / 2] : (s[k / 2 - 1] + s[k / 2]) / 2), hours: Math.round(v.h) };
+        }
+        return json({ ok: true, months });
       }
 
       default:

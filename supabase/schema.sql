@@ -8,7 +8,7 @@
 --                                  после проверки подписи Telegram;
 --    bot_users, shifts,
 --    notify_log, ics_tokens      — бот и Edge Function (service_role);
---    paydays                     — только Edge Function (даты зарплаты).
+--    paydays, indirect           — только Edge Function (даты зарплаты, Indirect).
 --  Анон-ключ (он публичный, лежит в Mini App) может только читать
 --  рейтинг, и то без Telegram ID.
 -- ═══════════════════════════════════════════════════════════════════
@@ -132,6 +132,22 @@ create index if not exists paydays_month_idx on public.paydays (month);
 alter table public.paydays enable row level security;
 
 
+-- 8. ПРЕМИЯ INDIRECT ─────────────────────────────────────────────────
+-- Сумма премии Indirect из pasku и часы на Indirect за месяц. Из этого
+-- считается средняя ставка Indirect за час по складу. Пишет и читает только
+-- Edge Function; наружу — только средние по месяцу, без uid.
+create table if not exists public.indirect (
+  uid        text        not null,
+  month      text        not null,              -- 'YYYY-MM'
+  amount     numeric     not null,              -- zł брутто
+  hours      numeric     not null,
+  updated_at timestamptz default now(),
+  primary key (uid, month)
+);
+create index if not exists indirect_month_idx on public.indirect (month);
+alter table public.indirect enable row level security;
+
+
 -- 6b. Смена в рейтинге для тех, кто уже выбрал её в боте или приложении
 update public.leaderboard l set team = b.team, grp = b.grp
 from public.bot_users b
@@ -154,5 +170,5 @@ select c.relname as table_name, c.relrowsecurity as rls_on,
        (select count(*) from pg_policies p where p.schemaname = 'public' and p.tablename = c.relname) as policies
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public'
-  and c.relname in ('leaderboard', 'consents', 'bot_users', 'shifts', 'notify_log', 'ics_tokens', 'paydays')
+  and c.relname in ('leaderboard', 'consents', 'bot_users', 'shifts', 'notify_log', 'ics_tokens', 'paydays', 'indirect')
 order by c.relname;

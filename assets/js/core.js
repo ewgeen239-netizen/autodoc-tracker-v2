@@ -212,7 +212,8 @@
    *    absences (пропуски за месяц: премия ×1,25 / ×0,8 / 0 — см. premiumFactor),
    *    dark (Dodatek DARK, брутто), ekw (эквиваленты за одежду/стирку — без налога),
    *    deduct (удержания из «на руки»: benefit и т.п.), ytd (брутто с начала года до месяца — для лимита ulga),
-   *    bonus (премия за пики, брутто), extra (прочие доплаты брутто),
+   *    bonus (премия за пики, брутто), indirect (премия Indirect, брутто, как в pasku),
+ *    extra (прочие доплаты брутто),
    *    young:true|false, kup:'local'|'commute', pit2:true|false, ppk:true|false,
    *    nightBasis:'min'|'own'
    *  }  */
@@ -238,6 +239,7 @@
       ovt50: r2(o50 * rate * 1.5),
       ovt100: r2(o100 * rate * 2),
       bonus: r2(Math.max(0, +inp.bonus || 0) * premiumFactor(inp.absences)),
+      indirect: r2(Math.max(0, +inp.indirect || 0)),
       dark: r2(Math.max(0, +inp.dark || 0)),
       extra: r2(Math.max(0, +inp.extra || 0)),
     };
@@ -290,7 +292,7 @@
   // Переменная часть одного месяца из результата salary(): премия, сверхурочные
   // целиком, ночные и Dodatek DARK (так считает AutoDoc).
   const variableOf = (res, inp) => ({
-    var: r2(res.parts.night + res.parts.ovt50 + res.parts.ovt100 + res.parts.bonus + res.parts.dark + res.parts.extra),
+    var: r2(res.parts.night + res.parts.ovt50 + res.parts.ovt100 + res.parts.bonus + res.parts.indirect + res.parts.dark + res.parts.extra),
     hours: (+inp.hours || 0) + (+inp.ovt50 || 0) + (+inp.ovt100 || 0),
   });
 
