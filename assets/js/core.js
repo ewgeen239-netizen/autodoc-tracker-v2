@@ -337,7 +337,12 @@
   // ctx: { young: true|false|null, team, rate, tracker: { bonus, bonusBase, pf, indirect,
   //        hours, urlopHours, netto, has } } — что насчитал сам трекер.
   // Возвращает пункты проверки (ok | info | warn | bad) и общий итог.
+  // Язык текстов проверки: приложение зовёт setLang('pl'), по умолчанию русский.
+  let LANG = 'ru';
+  const T = (ru, pl) => (LANG === 'pl' ? pl : ru);
+  const setLang = l => { LANG = l === 'pl' ? 'pl' : 'ru'; };
   const near = (a, b, tol = .02) => Math.abs(a - b) <= tol + 1e-9;
+  const hU = () => T('ч', 'h');
   const isHoursLabel = l => /^ilo[sś][cć]/i.test(l);
   function slipTaxes(s, ctx, pre) {
     const f = s.f, out = [], add = (level, title, text) => out.push({ level, title: pre + title, text });
@@ -345,37 +350,38 @@
     // ZUS работника: 9,76% + 1,5% + 2,45% от podstawy ZUS, каждая часть округляется
     if (f.zus !== undefined) {
       const exp = r2(r2(zusBase * TAX.ZUS.em) + r2(zusBase * TAX.ZUS.rent) + r2(zusBase * TAX.ZUS.chor));
-      near(f.zus, exp, .03) ? add('ok', 'ZUS 13,71%', `${fmt(f.zus)} zł с ${fmt(zusBase)} zł — верно`)
-        : add('bad', 'ZUS 13,71%', `удержано ${fmt(f.zus)} zł, по ставкам должно быть ${fmt(exp)} zł`);
+      near(f.zus, exp, .03) ? add('ok', 'ZUS 13,71%', T(`${fmt(f.zus)} zł с ${fmt(zusBase)} zł — верно`, `${fmt(f.zus)} zł od ${fmt(zusBase)} zł — poprawnie`))
+        : add('bad', 'ZUS 13,71%', T(`удержано ${fmt(f.zus)} zł, по ставкам должно быть ${fmt(exp)} zł`, `potrącono ${fmt(f.zus)} zł, według stawek powinno być ${fmt(exp)} zł`));
     }
     const zus = f.zus || 0;
     if (f.health !== undefined) {
       const hb = f.healthBase ?? r2(zusBase - zus), exp = r2(hb * TAX.HEALTH);
-      near(f.health, exp, .03) ? add('ok', 'Składka zdrowotna 9%', `${fmt(f.health)} zł с ${fmt(hb)} zł — верно`)
-        : add('bad', 'Składka zdrowotna 9%', `удержано ${fmt(f.health)} zł, должно быть ${fmt(exp)} zł`);
+      near(f.health, exp, .03) ? add('ok', 'Składka zdrowotna 9%', T(`${fmt(f.health)} zł с ${fmt(hb)} zł — верно`, `${fmt(f.health)} zł od ${fmt(hb)} zł — poprawnie`))
+        : add('bad', 'Składka zdrowotna 9%', T(`удержано ${fmt(f.health)} zł, должно быть ${fmt(exp)} zł`, `potrącono ${fmt(f.health)} zł, powinno być ${fmt(exp)} zł`));
     }
     // PIT на odcinku может не печататься (при uldze его нет) — выводим из остатка
     const known = r2(brutto - zus - (f.health || 0) - (f.benefit || 0) - (f.ppk || 0) + (f.ekw || 0));
     const pit = f.pit !== undefined ? f.pit : r2(known - (f.netto || 0));
     if (f.pit !== undefined) {
       const exp = r2(known - f.pit);
-      near(f.netto, exp, .03) ? add('ok', 'Арифметика «на руки»', `брутто − ZUS − здоровье − PIT − удержания + эквиваленты = ${fmt(f.netto)} zł`)
-        : add('bad', 'Арифметика «на руки»', `по строкам odcinka выходит ${fmt(exp)} zł, а к выплате ${fmt(f.netto)} zł`);
+      near(f.netto, exp, .03) ? add('ok', T('Арифметика «на руки»', 'Rachunek «na rękę»'), T(`брутто − ZUS − здоровье − PIT − удержания + эквиваленты = ${fmt(f.netto)} zł`, `brutto − ZUS − zdrowotna − PIT − potrącenia + ekwiwalenty = ${fmt(f.netto)} zł`))
+        : add('bad', T('Арифметика «на руки»', 'Rachunek «na rękę»'), T(`по строкам odcinka выходит ${fmt(exp)} zł, а к выплате ${fmt(f.netto)} zł`, `z pozycji odcinka wychodzi ${fmt(exp)} zł, a do wypłaty ${fmt(f.netto)} zł`));
     } else if (Math.abs(pit - Math.round(pit)) > .02) {
-      add('warn', 'Удержание без названия', `из «на руки» ушло ещё ${fmt(pit)} zł, которых нет в строках odcinka. Спроси в kadrach, что это.`);
+      add('warn', T('Удержание без названия', 'Potrącenie bez nazwy'), T(`из «на руки» ушло ещё ${fmt(pit)} zł, которых нет в строках odcinka. Спроси в kadrach, что это.`, `z kwoty «na rękę» zeszło jeszcze ${fmt(pit)} zł, których nie ma w pozycjach odcinka. Zapytaj w kadrach, co to jest.`));
     }
     const pitR = Math.round(pit);
     const pct = (f.pitPct || TAX.PIT * 100) / 100;
     const pb = f.pitBase || 0;
     if (pitR <= 0) {
-      ctx.young === false ? add('warn', 'PIT не удержан', 'Так бывает при uldze dla młodych (до 26 лет). Тебе 26+ — уточни в kadrach, иначе налог доплатишь в PIT-37.')
-        : add(ctx.young ? 'ok' : 'info', 'PIT 0 zł', 'ulga dla młodych: доход до 26 лет без налога (до 85 528 zł в год)');
+      ctx.young === false ? add('warn', T('PIT не удержан', 'PIT nie został pobrany'), T('Так бывает при uldze dla młodych (до 26 лет). Тебе 26+ — уточни в kadrach, иначе налог доплатишь в PIT-37.', 'Tak jest przy uldze dla młodych (do 26 lat). Masz 26+ — zapytaj w kadrach, inaczej dopłacisz podatek w PIT-37.'))
+        : add(ctx.young ? 'ok' : 'info', 'PIT 0 zł', T('ulga dla młodych: доход до 26 лет без налога (до 85 528 zł в год)', 'ulga dla młodych: dochód do 26 lat bez podatku (do 85 528 zł rocznie)'));
     } else if (pb) {
       const with2 = Math.max(0, Math.round(pb * pct - TAX.PIT_REDUCE)), without = Math.round(pb * pct);
-      if (Math.abs(pitR - with2) <= 1) add('ok', 'PIT', `${fmt(pitR)} zł = ${Math.round(pct * 100)}% от ${fmt(pb)} − 300 (PIT-2 учтён)`);
-      else if (Math.abs(pitR - without) <= 1) add('warn', 'PIT без PIT-2', `${fmt(pitR)} zł = ${Math.round(pct * 100)}% от ${fmt(pb)} без вычета 300 zł. Подай PIT-2 в kadry — будешь получать на 300 zł больше в месяц.`);
-      else if (ctx.young) add('bad', 'PIT удержан', `${fmt(pitR)} zł, хотя по возрасту положена ulga dla młodych. Проверь дату рождения в kadrach.`);
-      else add('warn', 'PIT', `${fmt(pitR)} zł не сходится с ${Math.round(pct * 100)}% от ${fmt(pb)} − 300 (${fmt(with2)} zł)`);
+      const pc = Math.round(pct * 100);
+      if (Math.abs(pitR - with2) <= 1) add('ok', 'PIT', T(`${fmt(pitR)} zł = ${pc}% от ${fmt(pb)} − 300 (PIT-2 учтён)`, `${fmt(pitR)} zł = ${pc}% od ${fmt(pb)} − 300 (PIT-2 uwzględniony)`));
+      else if (Math.abs(pitR - without) <= 1) add('warn', T('PIT без PIT-2', 'PIT bez PIT-2'), T(`${fmt(pitR)} zł = ${pc}% от ${fmt(pb)} без вычета 300 zł. Подай PIT-2 в kadry — будешь получать на 300 zł больше в месяц.`, `${fmt(pitR)} zł = ${pc}% od ${fmt(pb)} bez odliczenia 300 zł. Złóż PIT-2 w kadrach — dostaniesz 300 zł więcej miesięcznie.`));
+      else if (ctx.young) add('bad', T('PIT удержан', 'PIT pobrany'), T(`${fmt(pitR)} zł, хотя по возрасту положена ulga dla młodych. Проверь дату рождения в kadrach.`, `${fmt(pitR)} zł, choć ze względu na wiek przysługuje ulga dla młodych. Sprawdź datę urodzenia w kadrach.`));
+      else add('warn', 'PIT', T(`${fmt(pitR)} zł не сходится с ${pc}% от ${fmt(pb)} − 300 (${fmt(with2)} zł)`, `${fmt(pitR)} zł nie zgadza się z ${pc}% od ${fmt(pb)} − 300 (${fmt(with2)} zł)`));
     }
     return { items: out, pit: Math.max(0, pitR) };
   }
@@ -388,24 +394,24 @@
     const rate = f.rate || 0;
     if (f.hours !== undefined && rate && f.base !== undefined) {
       const exp = r2(f.hours * rate);
-      near(f.base, exp) ? add('ok', 'Основные часы', `${fmt(f.hours)} ч × ${fmt(rate)} zł = ${fmt(f.base)} zł`)
-        : add('bad', 'Основные часы', `${fmt(f.hours)} ч × ${fmt(rate)} zł = ${fmt(exp)} zł, а начислено ${fmt(f.base)} zł`);
+      near(f.base, exp) ? add('ok', T('Основные часы', 'Godziny podstawowe'), `${fmt(f.hours)} ${hU()} × ${fmt(rate)} zł = ${fmt(f.base)} zł`)
+        : add('bad', T('Основные часы', 'Godziny podstawowe'), `${fmt(f.hours)} ${hU()} × ${fmt(rate)} zł = ${fmt(exp)} zł, ${T('а начислено', 'a naliczono')} ${fmt(f.base)} zł`);
     }
     if (f.nightHours && f.night !== undefined && mk) {
       const nom = nominalHours(mk), exp = r2(f.nightHours * TAX.NIGHT * minWage(y) / nom), own = r2(f.nightHours * TAX.NIGHT * rate);
-      if (f.night + .05 >= exp) add('ok', 'Ночная доплата 20%', `${fmt(f.nightHours)} ч × ${fmt(r2(TAX.NIGHT * minWage(y) / nom))} zł = ${fmt(f.night)} zł${near(f.night, own, .05) && !near(own, exp, .05) ? ' (от твоей ставки)' : ''}`);
-      else add('bad', 'Ночная доплата 20%', `за ${fmt(f.nightHours)} ч положено ${fmt(exp)} zł (20% от минимальной часовой), начислено ${fmt(f.night)} zł`);
+      if (f.night + .05 >= exp) add('ok', T('Ночная доплата 20%', 'Dodatek nocny 20%'), `${fmt(f.nightHours)} ${hU()} × ${fmt(r2(TAX.NIGHT * minWage(y) / nom))} zł = ${fmt(f.night)} zł${near(f.night, own, .05) && !near(own, exp, .05) ? T(' (от твоей ставки)', ' (od twojej stawki)') : ''}`);
+      else add('bad', T('Ночная доплата 20%', 'Dodatek nocny 20%'), T(`за ${fmt(f.nightHours)} ч положено ${fmt(exp)} zł (20% от минимальной часовой), начислено ${fmt(f.night)} zł`, `za ${fmt(f.nightHours)} h należy się ${fmt(exp)} zł (20% minimalnej stawki godzinowej), naliczono ${fmt(f.night)} zł`));
     }
     for (const [pct, o] of Object.entries((main && main.ovt) || {})) {
       if (!o.hours || o.amount === undefined || !rate) continue;
       const exp = r2(o.hours * rate * (pct === '50' ? 1.5 : 2));
-      o.amount + .02 >= exp ? add('ok', `Сверхурочные +${pct}%`, `${fmt(o.hours)} ч × ${fmt(rate)} × ${pct === '50' ? '1,5' : '2'} = ${fmt(o.amount)} zł`)
-        : add('bad', `Сверхурочные +${pct}%`, `за ${fmt(o.hours)} ч положено ${fmt(exp)} zł, начислено ${fmt(o.amount)} zł`);
+      o.amount + .02 >= exp ? add('ok', `${T('Сверхурочные', 'Nadgodziny')} +${pct}%`, `${fmt(o.hours)} ${hU()} × ${fmt(rate)} × ${pct === '50' ? '1,5' : '2'} = ${fmt(o.amount)} zł`)
+        : add('bad', `${T('Сверхурочные', 'Nadgodziny')} +${pct}%`, T(`за ${fmt(o.hours)} ч положено ${fmt(exp)} zł, начислено ${fmt(o.amount)} zł`, `za ${fmt(o.hours)} h należy się ${fmt(exp)} zł, naliczono ${fmt(o.amount)} zł`));
     }
     if (f.urlopHours && f.urlop !== undefined) {
       const ph = r2(f.urlop / f.urlopHours);
-      ph + .01 >= rate ? add('ok', 'Отпуск', `${fmt(f.urlopHours)} ч по ${fmt(ph)} zł: ставка ${fmt(rate)} + ${fmt(r2(ph - rate))} средних доплат`)
-        : add('bad', 'Отпуск', `час отпуска ${fmt(ph)} zł — меньше ставки ${fmt(rate)} zł`);
+      ph + .01 >= rate ? add('ok', T('Отпуск', 'Urlop'), T(`${fmt(f.urlopHours)} ч по ${fmt(ph)} zł: ставка ${fmt(rate)} + ${fmt(r2(ph - rate))} средних доплат`, `${fmt(f.urlopHours)} h po ${fmt(ph)} zł: stawka ${fmt(rate)} + ${fmt(r2(ph - rate))} średnich dodatków`))
+        : add('bad', T('Отпуск', 'Urlop'), T(`час отпуска ${fmt(ph)} zł — меньше ставки ${fmt(rate)} zł`, `godzina urlopu ${fmt(ph)} zł — mniej niż stawka ${fmt(rate)} zł`));
     }
     // Брутто = сумма начислений. Незнакомые статьи (siła wyższa, chorobowe) тоже деньги.
     if (main && f.brutto !== undefined) {
@@ -413,8 +419,8 @@
         + (f.ovtTotal ?? Object.values(main.ovt || {}).reduce((s, o) => s + (o.amount || 0), 0))
         + main.other.filter(o => !isHoursLabel(o.label)).reduce((s, o) => s + o.value, 0);
       const extra = main.other.filter(o => !isHoursLabel(o.label)).map(o => o.label);
-      if (!near(r2(money), f.brutto, .05)) add('warn', 'Брутто', `статьи дают ${fmt(r2(money))} zł, а брутто ${fmt(f.brutto)} zł — в odcinku есть строки, которые трекер не узнал`);
-      else if (extra.length) add('info', 'Другие начисления', extra.join(', '));
+      if (!near(r2(money), f.brutto, .05)) add('warn', 'Brutto', T(`статьи дают ${fmt(r2(money))} zł, а брутто ${fmt(f.brutto)} zł — в odcinku есть строки, которые трекер не узнал`, `pozycje dają ${fmt(r2(money))} zł, a brutto ${fmt(f.brutto)} zł — w odcinku są pozycje, których tracker nie rozpoznał`));
+      else if (extra.length) add('info', T('Другие начисления', 'Inne składniki'), extra.join(', '));
     }
     let pitTotal = 0;
     slips.forEach(s => { const r = slipTaxes(s, ctx, s.kind === 'kor' ? 'Korekta: ' : ''); items.push(...r.items); pitTotal += r.pit; });
@@ -424,22 +430,22 @@
     const bonus = sum('bonus'), netto = sum('netto'), brutto = sum('brutto');
     const t = ctx.tracker || {};
     // премия трекера = пики × обецность + Indirect
-    const how = () => [t.bonusBase > 0 ? `пики ${fmt(t.bonusBase)} × ${String(t.pf).replace('.', ',')}` : '', t.indirect > 0 ? `Indirect ${fmt(t.indirect)}` : ''].filter(Boolean).join(' + ');
+    const how = () => [t.bonusBase > 0 ? `${T('пики', 'piki')} ${fmt(t.bonusBase)} × ${String(t.pf).replace('.', ',')}` : '', t.indirect > 0 ? `Indirect ${fmt(t.indirect)}` : ''].filter(Boolean).join(' + ');
     if (t.bonus > 0) {
       const diff = r2(bonus - t.bonus), tol = Math.max(1, t.bonus * .005);
-      if (diff >= -tol) add('ok', 'Премия', `${fmt(bonus)} zł, трекер насчитал ${fmt(t.bonus)} zł (${how()})${diff > tol ? `, выплатили на ${fmt(diff)} zł больше` : ''}`);
-      else add('bad', 'Премия недоплачена', `в odcinku ${fmt(bonus)} zł, по трекеру ${fmt(t.bonus)} zł (${how()}). Не хватает ${fmt(-diff)} zł — спроси у лидера или жди korektę.`);
-    } else if (bonus) add('info', 'Премия', `${fmt(bonus)} zł. В трекере нет пиков и Indirect за этот месяц — сравнить не с чем.`);
+      if (diff >= -tol) add('ok', T('Премия', 'Premia'), T(`${fmt(bonus)} zł, трекер насчитал ${fmt(t.bonus)} zł (${how()})${diff > tol ? `, выплатили на ${fmt(diff)} zł больше` : ''}`, `${fmt(bonus)} zł, tracker policzył ${fmt(t.bonus)} zł (${how()})${diff > tol ? `, wypłacono o ${fmt(diff)} zł więcej` : ''}`));
+      else add('bad', T('Премия недоплачена', 'Premia niedopłacona'), T(`в odcinku ${fmt(bonus)} zł, по трекеру ${fmt(t.bonus)} zł (${how()}). Не хватает ${fmt(-diff)} zł — спроси у лидера или жди korektę.`, `w odcinku ${fmt(bonus)} zł, według trackera ${fmt(t.bonus)} zł (${how()}). Brakuje ${fmt(-diff)} zł — zapytaj lidera albo czekaj na korektę.`));
+    } else if (bonus) add('info', T('Премия', 'Premia'), T(`${fmt(bonus)} zł. В трекере нет пиков и Indirect за этот месяц — сравнить не с чем.`, `${fmt(bonus)} zł. W trackerze nie ma pików ani Indirect za ten miesiąc — nie ma z czym porównać.`));
     if (t.has && f.hours !== undefined) {
       const sh = r2((f.hours || 0) + (f.urlopHours || 0)), th = r2((t.hours || 0) + (t.urlopHours || 0));
-      Math.abs(sh - th) <= 1 ? add('ok', 'Часы по графику', `${fmt(sh)} ч, как в графике трекера`)
-        : add('warn', 'Часы по графику', `в odcinku ${fmt(sh)} ч (работа + отпуск), по графику трекера ${fmt(th)} ч. Проверь отметки отпуска и пропусков в календаре.`);
+      Math.abs(sh - th) <= 1 ? add('ok', T('Часы по графику', 'Godziny według grafiku'), T(`${fmt(sh)} ч, как в графике трекера`, `${fmt(sh)} h, jak w grafiku trackera`))
+        : add('warn', T('Часы по графику', 'Godziny według grafiku'), T(`в odcinku ${fmt(sh)} ч (работа + отпуск), по графику трекера ${fmt(th)} ч. Проверь отметки отпуска и пропусков в календаре.`, `w odcinku ${fmt(sh)} h (praca + urlop), według grafiku trackera ${fmt(th)} h. Sprawdź zaznaczenia urlopu i nieobecności w kalendarzu.`));
     }
     if (ctx.team === 'dark' && main && main.kind === 'main') {
-      if (!f.dark) add('warn', 'Dodatek DARK', 'в odcinku его нет. Если весь месяц ты в ночной смене — спроси в kadrach.');
-      else if (f.dark < 300) add('info', 'Dodatek DARK', `${fmt(f.dark)} из 300 zł — так бывает за неполный месяц смен`);
+      if (!f.dark) add('warn', 'Dodatek DARK', T('в odcinku его нет. Если весь месяц ты в ночной смене — спроси в kadrach.', 'nie ma go w odcinku. Jeśli cały miesiąc jesteś na nocnej zmianie — zapytaj w kadrach.'));
+      else if (f.dark < 300) add('info', 'Dodatek DARK', T(`${fmt(f.dark)} из 300 zł — так бывает за неполный месяц смен`, `${fmt(f.dark)} z 300 zł — tak bywa za niepełny miesiąc zmian`));
     }
-    if (t.netto > 0) add('info', 'Кошелёк трекера', `насчитал ${fmt(t.netto)} zł на руки, по odcinku ${fmt(netto)} zł (${netto >= t.netto ? '+' : '−'}${fmt(Math.abs(r2(netto - t.netto)))})`);
+    if (t.netto > 0) add('info', T('Кошелёк трекера', 'Portfel trackera'), `${T('насчитал', 'policzył')} ${fmt(t.netto)} ${T('zł на руки, по odcinku', 'zł na rękę, według odcinka')} ${fmt(netto)} zł (${netto >= t.netto ? '+' : '−'}${fmt(Math.abs(r2(netto - t.netto)))})`);
 
     const level = items.some(i => i.level === 'bad') ? 'bad' : items.some(i => i.level === 'warn') ? 'warn' : 'ok';
     // что можно перенести в настройки кошелька
@@ -504,7 +510,7 @@
 
   const Core = {
     ST, r2, rateFor, calc, monthAgg, monthBonus, monthSnapshot,
-    slipCheck, isWorkday, payDeadline, payday,
+    slipCheck, isWorkday, payDeadline, payday, setLang,
     iso, monthKey, addDays, addMonths, hmMin, daysInMonth,
     SHIFT_CUT_H, shiftDayFrom, shiftToday, shiftYest, shiftBounds, shiftDayOf, minutesBetween, nightMinutes,
     parseSpan, monthPlan, easter, plHolidays, nominalHours,

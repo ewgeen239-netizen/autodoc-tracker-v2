@@ -32,6 +32,7 @@
    "label": "GREEN",
    "defT": "06–14",
    "legend": "график уточняется",
+   "legend_pl": "grafik w przygotowaniu",
    "groups": [
     "A",
     "B",

@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261027.1909';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261103.1708';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -20,12 +20,38 @@ const int = n => Math.round(Number(n) || 0).toLocaleString('ru-RU');
 const h1 = n => { const v = Math.round((Number(n) || 0) * 10) / 10; return v.toLocaleString('ru-RU'); };
 const fmtD = s => { if (!s) return ''; const [y, m, d] = s.split('-'); return `${d}.${m}.${y}`; };
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
-const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-const WD = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+// ── язык: русский и польский ──
+// Каждый текст в коде — парой T('по-русски', 'po polsku'). Статичный HTML
+// переводится по data-pl (см. applyLangStatic). Язык хранится в DB.lang.
+const LANGS = ['ru', 'pl'];
+let LANG = 'ru';
+const T = (ru, pl) => (LANG === 'pl' ? pl : ru);
+const DATES = {
+  ru: { m: ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'],
+        g: ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'],
+        p: ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'],
+        w: ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'] },
+  pl: { m: ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień'],
+        g: ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia'],
+        p: ['styczniu', 'lutym', 'marcu', 'kwietniu', 'maju', 'czerwcu', 'lipcu', 'sierpniu', 'wrześniu', 'październiku', 'listopadzie', 'grudniu'],
+        w: ['nd', 'pn', 'wt', 'śr', 'cz', 'pt', 'sb'] },
+};
+// MONTHS — именительный (октябрь), MONTHS_GEN — родительный для дат (9 октября),
+// MONTHS_IN — «в октябре». Переназначаются при смене языка.
+let MONTHS = DATES.ru.m, MONTHS_GEN = DATES.ru.g, MONTHS_IN = DATES.ru.p, WD = DATES.ru.w;
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const mLabel = mk => { const [y, m] = mk.split('-').map(Number); return `${cap(MONTHS[m - 1])} ${y}`; };
-const plural = (n, a, b, c) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? a : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? b : c; };
+// Склонение по числу. Формы — через «|»: P(n, 'смена|смены|смен', 'zmiana|zmiany|zmian').
+// В польском 21, 31… — «zmian», а не «zmiana»: единственное число только у 1.
+const pluralRu = (n, a, b, c) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? a : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? b : c; };
+const pluralPl = (n, a, b, c) => { const m10 = n % 10, m100 = n % 100; return n === 1 ? a : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? b : c; };
+const P = (n, ru, pl) => { n = Math.abs(Math.round(+n || 0)); return LANG === 'pl' ? pluralPl(n, ...pl.split('|')) : pluralRu(n, ...ru.split('|')); };
+function setLang(l) {
+  LANG = LANGS.includes(l) ? l : 'ru';
+  ({ m: MONTHS, g: MONTHS_GEN, p: MONTHS_IN, w: WD } = DATES[LANG]);
+  document.documentElement.lang = LANG;
+  C.setLang && C.setLang(LANG);
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const hf = () => tgv('6.1') ? TG.HapticFeedback : null;
@@ -52,7 +78,7 @@ function cleanMain(v) {
 function defaults() {
   return {
     v: 2, uid: '', name: '', emoji: '👷', photo: '', team: 'dark', group: 'A', teamAt: 0,
-    ws: 'mon', theme: 'auto', consent: null, mainSt: MAIN_ST.slice(),
+    ws: 'mon', theme: 'auto', lang: '', consent: null, mainSt: MAIN_ST.slice(),
     entries: [], archive: {}, notes: [], urlop: {}, absent: {}, ovt: [], slips: [], indirect: [],
     profile: { birth: '', birthOk: false, rateMode: '33.00', rate: 33.00, kup: 'local', pit2: true, ppk: false, nightBasis: 'min', extra: 0,
       dark: 300, ekw: 22.95, deduct: 0 },
@@ -72,6 +98,7 @@ function sanitize(raw) {
   d.group = /^[A-F]$/.test(raw.group) ? raw.group : 'A';
   d.teamAt = fin(raw.teamAt, 0, 9e15);
   d.ws = raw.ws === 'sun' ? 'sun' : 'mon';
+  d.lang = LANGS.includes(raw.lang) ? raw.lang : '';
   d.mainSt = cleanMain(raw.mainSt);
   d.theme = ['auto', 'dark', 'light'].includes(raw.theme) ? raw.theme : 'auto';
   d.consent = raw.consent && typeof raw.consent.v === 'string' ? { v: str(raw.consent.v, 10), at: str(raw.consent.at, 40) } : null;
@@ -217,7 +244,7 @@ function pushRank() {
     const m = C.monthKey(new Date()), s = C.monthSnapshot(DB.entries, m);
     // В рейтинг — вся премия, как на главной: пики × обецность + Indirect
     const indirect = indAmount(m), bonus = C.r2(s.bonus * C.premiumFactor(autoHours(m).absences) + indirect);
-    api('rank', { row: { month: m, name: DB.name || 'Аноним', emoji: DB.emoji, team: DB.team, group: DB.group, bonus, indirect, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
+    api('rank', { row: { month: m, name: DB.name || T('Аноним', 'Anonim'), emoji: DB.emoji, team: DB.team, group: DB.group, bonus, indirect, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
   }, 1500);
 }
 let _profT = null;
@@ -226,7 +253,7 @@ function pushProfile() {
   clearTimeout(_profT);
   const today = C.iso(new Date());
   const off = [DB.urlop, DB.absent].flatMap(src => Object.entries(src).flatMap(([mk, days]) => Object.keys(days).map(d => `${mk}-${String(d).padStart(2, '0')}`))).filter(d => d >= today).sort().slice(0, 120);
-  _profT = setTimeout(() => api('profile', { team: DB.team, group: DB.group, notify: DB.notify, name: DB.name, off }).catch(() => toast('Не удалось сохранить настройки оповещений — проверь связь')), 900);
+  _profT = setTimeout(() => api('profile', { team: DB.team, group: DB.group, notify: DB.notify, name: DB.name, off }).catch(() => toast(T('Не удалось сохранить настройки оповещений — проверь связь', 'Nie udało się zapisać powiadomień — sprawdź internet'))), 900);
 }
 
 // ═════════════════════ ЗАГРУЗЧИК ═════════════════════
@@ -251,9 +278,17 @@ async function checkVersion() {
   } catch { return false; }
 }
 
+// Язык до загрузки данных: сохранённый выбор → язык Telegram → язык телефона.
+function guessLang() {
+  try { const l = JSON.parse(localStorage.getItem(KEY) || 'null')?.lang; if (LANGS.includes(l)) return l; } catch {}
+  const code = String(TG_RAW?.initDataUnsafe?.user?.language_code || navigator.language || '').toLowerCase();
+  return code.startsWith('pl') ? 'pl' : 'ru';
+}
+
 async function boot() {
   if (await checkVersion()) return;
   const t0 = Date.now();
+  setLang(guessLang()); applyLangStatic();
   applyTheme();
 
   // 1. Среда: открыто ли из Telegram и есть ли подписанные данные
@@ -262,19 +297,19 @@ async function boot() {
     try { TG.ready(); TG.expand(); if (tgv('7.7')) TG.disableVerticalSwipes(); } catch {}
   }
   await sleep(250);
-  step('env', IN_TG ? 'ok' : 'warn', IN_TG ? '' : 'браузер');
+  step('env', IN_TG ? 'ok' : 'warn', IN_TG ? '' : T('браузер', 'przeglądarka'));
 
   // 2. Подпись: сервер проверяет HMAC initData и возвращает доверенный id
   step('sign', 'run');
   const hello = await verifyAccount();
-  step('sign', STATE.verified ? 'ok' : 'warn', STATE.verified ? '' : VERIFY_TEXT[STATE.verifyState].short);
+  step('sign', STATE.verified ? 'ok' : 'warn', STATE.verified ? '' : VERIFY()[STATE.verifyState].short);
 
   // 3. Данные: локальная копия → облачная копия Telegram → чистый старт
   step('data', 'run');
   let local = loadLocal();
   if (!local || (!local.entries.length && !local.wallet.cur && !local.consent)) {
     const cloud = await cloudRestore();
-    if (cloud) { local = cloud; toastLater('Данные восстановлены из облака Telegram'); }
+    if (cloud) { local = cloud; toastLater(T('Данные восстановлены из облака Telegram', 'Dane przywrócone z chmury Telegrama')); }
   }
   DB = local || defaults();
   const u = TG?.initDataUnsafe?.user;
@@ -289,18 +324,19 @@ async function boot() {
     if (p && p.team && (+new Date(p.team_at || 0)) > DB.teamAt) { DB.team = p.team; DB.group = p.grp || DB.group; DB.teamAt = +new Date(p.team_at); }
     if (p && p.notify) DB.notify = { ...DB.notify, ...p.notify };
   }
+  if (!DB.lang) DB.lang = LANG; else if (DB.lang !== LANG) { setLang(DB.lang); applyLangStatic(); }
   pruneOldMonths();
   walletRollover();
   save();
-  step('data', 'ok', DB.entries.length ? `${DB.entries.length} ${plural(DB.entries.length, 'запись', 'записи', 'записей')}` : '');
+  step('data', 'ok', DB.entries.length ? `${DB.entries.length} ${P(DB.entries.length, 'запись|записи|записей', 'wpis|wpisy|wpisów')}` : '');
 
   // 4. График смен — один файл для приложения и бота
   step('sched', 'run');
   STATE.sched = await loadSchedule();
-  step('sched', STATE.sched ? 'ok' : 'warn', STATE.sched ? '' : 'нет файла');
+  step('sched', STATE.sched ? 'ok' : 'warn', STATE.sched ? '' : T('нет файла', 'brak pliku'));
 
-  if (!IN_TG) note('Открыто вне Telegram: всё считается, но рейтинг и оповещения работают только из бота.');
-  else if (!STATE.verified) note('Сервер не подтвердил аккаунт. Пики и зарплата работают, рейтинг и оповещения — после переоткрытия из бота.');
+  if (!IN_TG) note(T('Открыто вне Telegram: всё считается, но рейтинг и оповещения работают только из бота.', 'Otwarte poza Telegramem: wszystko się liczy, ale ranking i powiadomienia działają tylko z bota.'));
+  else if (!STATE.verified) note(T('Сервер не подтвердил аккаунт. Пики и зарплата работают, рейтинг и оповещения — после переоткрытия из бота.', 'Serwer nie potwierdził konta. Piki i wypłata działają, ranking i powiadomienia — po ponownym otwarciu z bota.'));
 
   const wait = Math.max(0, 1900 - (Date.now() - t0));
   await sleep(REDUCED ? 0 : wait);
@@ -332,24 +368,24 @@ function onboard() {
   const t = STATE.obTeam, g = STATE.obGroup;
   $('consent').hidden = false;
   document.querySelector('#consent .gate-card').innerHTML = `<div class="tape" aria-hidden="true"></div>
-    <h1 class="gate-h">Твоя смена</h1>
-    <p>Выбери бригаду и группу, как в графике на складе. По ним строятся календарь, часы в кошельке и напоминания в Telegram. Поменять можно в любой момент.</p>
-    <div class="teams" style="margin-top:14px">${teams.map(k => { const m = teamMeta(k); return `<button class="team-b${k === t ? ' on' : ''}" style="--tc:${TEAM_COL[k] || 'var(--acc)'}" data-act="ob-team" data-v="${k}"><b>${esc(m.label)}</b><small>${esc(m.legend || '')}</small></button>`; }).join('')}</div>
-    ${t ? `<div class="field" style="margin-top:14px"><span>Группа</span><div class="chips">${teamMeta(t).groups.map(x => `<button class="chip${x === g ? ' on' : ''}" data-act="ob-group" data-v="${x}">${x}</button>`).join('')}</div></div>` : ''}
-    <button class="btn btn-acc btn-wide" style="margin-top:18px" data-act="ob-done" ${t && g ? '' : 'disabled'}>${t && g ? `Готово: ${esc(teamMeta(t).label)} ${g}` : 'Выбери смену и группу'}</button>`;
+    <h1 class="gate-h">${T('Твоя смена', 'Twoja zmiana')}</h1>
+    <p>${T('Выбери бригаду и группу, как в графике на складе. По ним строятся календарь, часы в кошельке и напоминания в Telegram. Поменять можно в любой момент.', 'Wybierz brygadę i grupę jak w grafiku na magazynie. Na tej podstawie powstaje kalendarz, godziny w portfelu i przypomnienia w Telegramie. Zmienisz to w każdej chwili.')}</p>
+    <div class="teams" style="margin-top:14px">${teams.map(k => { const m = teamMeta(k); return `<button class="team-b${k === t ? ' on' : ''}" style="--tc:${TEAM_COL[k] || 'var(--acc)'}" data-act="ob-team" data-v="${k}"><b>${esc(m.label)}</b><small>${esc((LANG === 'pl' && m.legend_pl) || m.legend || '')}</small></button>`; }).join('')}</div>
+    ${t ? `<div class="field" style="margin-top:14px"><span>${T('Группа', 'Grupa')}</span><div class="chips">${teamMeta(t).groups.map(x => `<button class="chip${x === g ? ' on' : ''}" data-act="ob-group" data-v="${x}">${x}</button>`).join('')}</div></div>` : ''}
+    <button class="btn btn-acc btn-wide" style="margin-top:18px" data-act="ob-done" ${t && g ? '' : 'disabled'}>${t && g ? `${T('Готово', 'Gotowe')}: ${esc(teamMeta(t).label)} ${g}` : T('Выбери смену и группу', 'Wybierz zmianę i grupę')}</button>`;
 }
 // ── подтверждение аккаунта ──
 // Сервер проверяет подпись Telegram и возвращает доверенный id. Без этого
 // пики и кошелёк работают, но рейтинг и оповещения — нет: писать в общую
 // базу от чужого имени нельзя.
-const VERIFY_TEXT = {
-  ok:       { short: '',            title: 'Аккаунт подтверждён', text: 'Telegram подтвердил, что это ты. Рейтинг и оповещения работают.' },
-  browser:  { short: 'браузер',     title: 'Открыто не из Telegram', text: 'Пики и кошелёк считаются, но рейтинг и оповещения работают, только если открыть трекер кнопкой «Трекер» в боте.' },
-  signature:{ short: 'не принята',  title: 'Сервер не узнал бота', text: 'Пики и кошелёк работают. Рейтинг и оповещения включатся после подтверждения — администратор уже видит это в боте. Попробуй позже.' },
-  expired:  { short: 'устарела',    title: 'Сессия Telegram устарела', text: 'Закрой трекер и открой его снова кнопкой в боте — подтверждение пройдёт само.' },
-  mismatch: { short: 'не совпала',  title: 'Аккаунт не совпал', text: 'Telegram прислал данные другого аккаунта. Закрой трекер и открой снова.' },
-  offline:  { short: 'нет связи',   title: 'Нет связи с сервером', text: 'Проверь интернет и нажми «Проверить снова». Записи сохраняются на телефоне.' },
-};
+const VERIFY = () => ({
+  ok:       { short: '', title: T('Аккаунт подтверждён', 'Konto potwierdzone'), text: T('Telegram подтвердил, что это ты. Рейтинг и оповещения работают.', 'Telegram potwierdził, że to ty. Ranking i powiadomienia działają.') },
+  browser:  { short: T('браузер', 'przeglądarka'), title: T('Открыто не из Telegram', 'Otwarte poza Telegramem'), text: T('Пики и кошелёк считаются, но рейтинг и оповещения работают, только если открыть трекер кнопкой «Трекер» в боте.', 'Piki i portfel się liczą, ale ranking i powiadomienia działają tylko po otwarciu trackera przyciskiem «Tracker» w bocie.') },
+  signature:{ short: T('не принята', 'odrzucony'), title: T('Сервер не узнал бота', 'Serwer nie rozpoznał bota'), text: T('Пики и кошелёк работают. Рейтинг и оповещения включатся после подтверждения — администратор уже видит это в боте. Попробуй позже.', 'Piki i portfel działają. Ranking i powiadomienia włączą się po potwierdzeniu — administrator już to widzi w bocie. Spróbuj później.') },
+  expired:  { short: T('устарела', 'wygasła'), title: T('Сессия Telegram устарела', 'Sesja Telegrama wygasła'), text: T('Закрой трекер и открой его снова кнопкой в боте — подтверждение пройдёт само.', 'Zamknij tracker i otwórz go ponownie przyciskiem w bocie — potwierdzenie przejdzie samo.') },
+  mismatch: { short: T('не совпала', 'niezgodne'), title: T('Аккаунт не совпал', 'Konto się nie zgadza'), text: T('Telegram прислал данные другого аккаунта. Закрой трекер и открой снова.', 'Telegram przysłał dane innego konta. Zamknij tracker i otwórz ponownie.') },
+  offline:  { short: T('нет связи', 'brak sieci'), title: T('Нет связи с сервером', 'Brak połączenia z serwerem'), text: T('Проверь интернет и нажми «Проверить снова». Записи сохраняются на телефоне.', 'Sprawdź internet i naciśnij «Sprawdź ponownie». Wpisy zapisują się w telefonie.') },
+});
 async function verifyAccount() {
   if (!IN_TG) { STATE.verifyState = 'browser'; return null; }
   try {
@@ -366,26 +402,26 @@ async function verifyAccount() {
   }
 }
 function verifyBanner() {
-  const v = VERIFY_TEXT[STATE.verifyState] || VERIFY_TEXT.offline;
+  const V = VERIFY(), v = V[STATE.verifyState] || V.offline;
   const bot = STATE.verifyState === 'browser' || STATE.verifyState === 'expired';
   return `<div class="vf-h"><span class="vf-ic">!</span><b>${v.title}</b></div><p>${v.text}</p>
-    <div class="vf-act">${STATE.verifyState === 'browser' ? '' : '<button class="btn btn-acc" data-act="reverify">Проверить снова</button>'}
-    ${bot ? '<button class="btn btn-ghost" data-act="open-bot">Открыть бота</button>' : ''}</div>`;
+    <div class="vf-act">${STATE.verifyState === 'browser' ? '' : `<button class="btn btn-acc" data-act="reverify">${T('Проверить снова', 'Sprawdź ponownie')}</button>`}
+    ${bot ? `<button class="btn btn-ghost" data-act="open-bot">${T('Открыть бота', 'Otwórz bota')}</button>` : ''}</div>`;
 }
 function renderVerify() {
   const o = $('offline');
   if (STATE.verified) { o.hidden = true; o.innerHTML = ''; }
   else { o.hidden = false; o.innerHTML = verifyBanner(); }
   const b = $('vf-badge');
-  if (b) { b.className = 'vf-badge ' + (STATE.verified ? 'ok' : 'no'); b.title = STATE.verified ? 'Аккаунт подтверждён Telegram' : 'Аккаунт не подтверждён'; }
+  if (b) { b.className = 'vf-badge ' + (STATE.verified ? 'ok' : 'no'); b.title = STATE.verified ? T('Аккаунт подтверждён Telegram', 'Konto potwierdzone przez Telegram') : T('Аккаунт не подтверждён', 'Konto niepotwierdzone'); }
 }
 async function reverify(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'Проверяю…'; }
+  if (btn) { btn.disabled = true; btn.textContent = T('Проверяю…', 'Sprawdzam…'); }
   const hello = await verifyAccount();
   if (STATE.verified) {
-    DB.uid = STATE.uid; save(); haptic.ok(); toast('Аккаунт подтверждён');
+    DB.uid = STATE.uid; save(); haptic.ok(); toast(T('Аккаунт подтверждён', 'Konto potwierdzone'));
     pushRank(); if (!hello?.profile || hello.profile.team !== DB.team) pushProfile();
-  } else { haptic.err(); toast(VERIFY_TEXT[STATE.verifyState].title); }
+  } else { haptic.err(); toast(VERIFY()[STATE.verifyState].title); }
   renderVerify(); renderAll();
 }
 function note(t) { const n = $('boot-note'); n.hidden = false; n.textContent = t; }
@@ -444,8 +480,34 @@ function sheet(html, onOpen) {
 }
 function closeSheet() { const bg = $('sheet-bg'); if (bg.hidden) return; bg.classList.add('closing'); setTimeout(() => { bg.hidden = true; bg.classList.remove('closing'); }, 200); }
 function confirmSheet(title, text, okLabel, fn) {
-  sheet(`<h3>${esc(title)}</h3><p>${esc(text)}</p><div class="stack"><button class="btn btn-bad btn-wide" data-act="sheet-ok">${esc(okLabel)}</button><button class="btn btn-ghost btn-wide" data-act="sheet-close">Отмена</button></div>`);
+  sheet(`<h3>${esc(title)}</h3><p>${esc(text)}</p><div class="stack"><button class="btn btn-bad btn-wide" data-act="sheet-ok">${esc(okLabel)}</button><button class="btn btn-ghost btn-wide" data-act="sheet-close">${T('Отмена', 'Anuluj')}</button></div>`);
   STATE.sheetOk = fn;
+}
+
+// Статичный HTML: у элемента data-pl — польский текст, русский запоминаем в
+// data-ru при первом переключении. data-pl-ph / data-pl-aria — для placeholder
+// и aria-label.
+function applyLangStatic() {
+  document.querySelectorAll('[data-pl]').forEach(el => {
+    if (el.dataset.ru === undefined) el.dataset.ru = el.textContent;
+    el.textContent = LANG === 'pl' ? el.dataset.pl : el.dataset.ru;
+  });
+  document.querySelectorAll('[data-pl-ph]').forEach(el => {
+    if (el.dataset.ruPh === undefined) el.dataset.ruPh = el.placeholder;
+    el.placeholder = LANG === 'pl' ? el.dataset.plPh : el.dataset.ruPh;
+  });
+  document.querySelectorAll('[data-pl-aria]').forEach(el => {
+    if (el.dataset.ruAria === undefined) el.dataset.ruAria = el.getAttribute('aria-label') || '';
+    el.setAttribute('aria-label', LANG === 'pl' ? el.dataset.plAria : el.dataset.ruAria);
+  });
+}
+// Переключатель в шапке и в профиле: всё перерисовывается на новом языке.
+function switchLang(l) {
+  if (!LANGS.includes(l) || l === LANG) return;
+  setLang(l); DB.lang = l; save(); haptic.pick();
+  applyLangStatic(); closeSheet(); renderVerify(); renderAll();
+  if (!$('consent').hidden && DB.consent) onboard();
+  toast(T('Язык: русский', 'Język: polski'));
 }
 
 // ═════════════════════ НАВИГАЦИЯ ═════════════════════
@@ -481,15 +543,16 @@ function nextShift(now = new Date()) {
 }
 function leftText(ms) {
   const m = Math.max(0, Math.round(ms / 60000)), h = Math.floor(m / 60), mm = m % 60;
-  if (h >= 24) { const d = Math.floor(h / 24); return `через ${d} ${plural(d, 'день', 'дня', 'дней')}`; }
-  return h ? `через ${h} ч ${mm} мин` : `через ${mm} мин`;
+  if (h >= 24) { const d = Math.floor(h / 24); return `${T('через', 'za')} ${d} ${P(d, 'день|дня|дней', 'dzień|dni|dni')}`; }
+  return h ? T(`через ${h} ч ${mm} мин`, `za ${h} h ${mm} min`) : T(`через ${mm} мин`, `za ${mm} min`);
 }
 function dayName(day) { const [y, m, d] = day.split('-').map(Number); const dt = new Date(y, m - 1, d); return `${d} ${MONTHS_GEN[m - 1]}, ${WD[dt.getDay()]}`; }
 
 // ═════════════════════ ГЛАВНАЯ ═════════════════════
 function renderHeader() {
-  $('me-name').textContent = DB.name || 'Сотрудник';
-  $('me-sub').innerHTML = `<span id="vf-badge" class="vf-badge ${STATE.verified ? 'ok' : 'no'}"></span>${STATE.verified ? 'подтверждён' : 'не подтверждён'}, M13 Outbound`;
+  $('me-name').textContent = DB.name || T('Сотрудник', 'Pracownik');
+  $('me-sub').innerHTML = `<span id="vf-badge" class="vf-badge ${STATE.verified ? 'ok' : 'no'}"></span>${STATE.verified ? T('подтверждён', 'potwierdzony') : T('не подтверждён', 'niepotwierdzony')}, M13 Outbound`;
+  document.querySelectorAll('#lang-chip [data-l]').forEach(x => x.classList.toggle('on', x.dataset.l === LANG));
   const av = $('av');
   if (DB.photo) { av.innerHTML = ''; const img = new Image(); img.alt = ''; img.referrerPolicy = 'no-referrer'; img.src = DB.photo; img.onerror = () => { av.innerHTML = `<span>${esc(DB.emoji)}</span>`; }; av.appendChild(img); }
   else av.innerHTML = `<span>${esc(DB.emoji)}</span>`;
@@ -508,21 +571,21 @@ function renderHome() {
   // На главной вся премия: пики с множителем обецности (без пропусков ×1,25) + Indirect.
   countUp($('plate-bonus'), C.r2(base * pf + ind));
   const indTxt = ind ? ` + Indirect ${money(ind)}` : '';
-  $('plate-cap').textContent = !base && !ind ? 'премия за пики и Indirect в этом месяце'
-    : !base ? `премия Indirect за ${MONTHS[+mk.slice(5) - 1]}`
-    : pf ? `премия: пики ${money(base)} × ${fx(pf)}${indTxt}${absN ? `, пропусков ${absN}` : ', без пропусков'}`
-    : `за пики премии нет: ${absN} ${plural(absN, 'пропуск', 'пропуска', 'пропусков')}${indTxt} (без них было бы ${money(base * 1.25)} zł)`;
+  $('plate-cap').textContent = !base && !ind ? T('премия за пики и Indirect в этом месяце', 'premia za piki i Indirect w tym miesiącu')
+    : !base ? T(`премия Indirect за ${MONTHS[+mk.slice(5) - 1]}`, `premia Indirect za ${MONTHS[+mk.slice(5) - 1]}`)
+    : pf ? `${T('премия: пики', 'premia: piki')} ${money(base)} × ${fx(pf)}${indTxt}${absN ? T(`, пропусков ${absN}`, `, nieobecności ${absN}`) : T(', без пропусков', ', bez nieobecności')}`
+    : `${T('за пики премии нет', 'za piki premii brak')}: ${absN} ${P(absN, 'пропуск|пропуска|пропусков', 'nieobecność|nieobecności|nieobecności')}${indTxt} (${T('без них было бы', 'bez nich byłoby')} ${money(base * 1.25)} zł)`;
 
   const ns = nextShift(now), box = $('next-shift');
-  if (!STATE.sched) box.innerHTML = `<div class="next-ic">📅</div><div><b>График не загрузился</b><small>Проверь интернет и открой приложение снова.</small></div>`;
-  else if (!ns) box.innerHTML = `<div class="next-ic">📅</div><div><b>Смен в графике нет</b><small>${DB.team === 'green' ? 'График GREEN ещё не внесён.' : 'Проверь смену и группу в шапке.'}</small></div>`;
+  if (!STATE.sched) box.innerHTML = `<div class="next-ic">📅</div><div><b>${T('График не загрузился', 'Grafik się nie wczytał')}</b><small>${T('Проверь интернет и открой приложение снова.', 'Sprawdź internet i otwórz aplikację ponownie.')}</small></div>`;
+  else if (!ns) box.innerHTML = `<div class="next-ic">📅</div><div><b>${T('Смен в графике нет', 'Brak zmian w grafiku')}</b><small>${DB.team === 'green' ? T('График GREEN ещё не внесён.', 'Grafik GREEN nie jest jeszcze dodany.') : T('Проверь смену и группу в шапке.', 'Sprawdź zmianę i grupę u góry.')}</small></div>`;
   else {
     const running = ns.b.st <= now;
-    const when = running ? `идёт сейчас, до ${ns.span.to}` : leftText(ns.b.st - now);
+    const when = running ? T(`идёт сейчас, до ${ns.span.to}`, `trwa teraz, do ${ns.span.to}`) : leftText(ns.b.st - now);
     const today = ns.day === C.shiftToday(now);
     box.innerHTML = `<div class="next-ic">${ns.span.from >= '20:00' || ns.span.from < '05:00' ? '🌙' : '☀️'}</div>
-      <div><b>${today ? 'Сегодня' : esc(dayName(ns.day))}, ${ns.span.from}–${ns.span.to}</b><small>${esc(when)}</small></div>
-      <button class="go" data-act="go" data-to="sched">График</button>`;
+      <div><b>${today ? T('Сегодня', 'Dziś') : esc(dayName(ns.day))}, ${ns.span.from}–${ns.span.to}</b><small>${esc(when)}</small></div>
+      <button class="go" data-act="go" data-to="sched">${T('График', 'Grafik')}</button>`;
   }
 
   const es = DB.entries.filter(e => e.shiftDate.slice(0, 7) === mk);
@@ -536,14 +599,14 @@ function renderHome() {
   $('home-st').innerHTML = rows.length ? rows.map(({ st, a }) => `
     <button class="strow" data-act="station" data-st="${st}">
       <span class="st-tag" style="background:${C.ST[st].col}">${C.ST[st].name}</span>
-      <span class="strow-b"><b>${C.ST[st].full}</b><small>${int(a.P)} шт за ${h1(a.H)} ч, темп ${h1(a.pph)}</small>
+      <span class="strow-b"><b>${C.ST[st].full}</b><small>${int(a.P)} ${T('шт за', 'szt. w')} ${h1(a.H)} ${T('ч, темп', 'h, tempo')} ${h1(a.pph)}</small>
         <span class="meter"><i style="width:${Math.round(a.bonus / total * 100)}%;background:${C.ST[st].col}"></i></span></span>
       <span class="strow-r">${money(a.bonus * pfH)}<small>zł × ${fx(pfH)}</small></span>
     </button>`).join('')
-    : `<div class="empty"><b>В этом месяце ещё нет записей</b>После смены запиши пики — премия посчитается сама.</div>`;
+    : `<div class="empty"><b>${T('В этом месяце ещё нет записей', 'W tym miesiącu nie ma jeszcze wpisów')}</b>${T('После смены запиши пики — премия посчитается сама.', 'Po zmianie zapisz piki — premia policzy się sama.')}</div>`;
 
   const w = walletView();
-  $('home-wallet-sub').textContent = w.saved ? `${money(w.res.netto)} zł на руки` : 'посчитать зарплату';
+  $('home-wallet-sub').textContent = w.saved ? `${money(w.res.netto)} zł ${T('на руки', 'na rękę')}` : T('посчитать зарплату', 'policz wypłatę');
   homeRank();
 }
 
@@ -559,15 +622,15 @@ async function homeRank() {
       if (!r.ok) throw 0;
       rows = await r.json();
       STATE.rankCache = { mk, rows, at: Date.now() };
-    } catch { sub.textContent = 'кто сколько заработал за месяц'; place.innerHTML = ''; return; }
+    } catch { sub.textContent = T('кто сколько заработал за месяц', 'kto ile zarobił w miesiącu'); place.innerHTML = ''; return; }
   }
   const i = STATE.pub ? rows.findIndex(x => x.pub === STATE.pub) : -1;
   if (i >= 0) {
-    sub.textContent = `ты на ${i + 1}-м месте из ${rows.length}`;
-    place.innerHTML = `#${i + 1}<small>${i === 0 ? 'лидер' : `до #${i}: ${money(Math.max(0, rows[i - 1].bonus - rows[i].bonus))} zł`}</small>`;
+    sub.textContent = T(`ты на ${i + 1}-м месте из ${rows.length}`, `jesteś na ${i + 1}. miejscu z ${rows.length}`);
+    place.innerHTML = `#${i + 1}<small>${i === 0 ? T('лидер', 'lider') : `${T('до', 'do')} #${i}: ${money(Math.max(0, rows[i - 1].bonus - rows[i].bonus))} zł`}</small>`;
   } else {
-    sub.textContent = rows.length ? `${rows.length} ${plural(rows.length, 'участник', 'участника', 'участников')} в этом месяце` : 'стань первым в этом месяце';
-    place.innerHTML = rows.length ? `${money(rows[0].bonus)}<small>zł у лидера</small>` : '';
+    sub.textContent = rows.length ? `${rows.length} ${P(rows.length, 'участник|участника|участников', 'uczestnik|uczestników|uczestników')} ${T('в этом месяце', 'w tym miesiącu')}` : T('стань первым в этом месяце', 'bądź pierwszy w tym miesiącu');
+    place.innerHTML = rows.length ? `${money(rows[0].bonus)}<small>${T('zł у лидера', 'zł u lidera')}</small>` : '';
   }
 }
 
@@ -578,17 +641,17 @@ async function homeRank() {
 const qa = { mode: 'today', day: '', base: '', f: null, o: null, p: '' };
 const qaReset = () => { qa.f = qa.o = null; qa.p = ''; };
 // Ставка ступени: у почасовых станций — zł за час, у остальных — zł за штуку.
-const rateTxt = (st, r) => C.ST[st].hourly ? `${money(r)} zł/ч` : `${r.toFixed(3).replace('.', ',')} zł`;
+const rateTxt = (st, r) => C.ST[st].hourly ? `${money(r)} ${T('zł/ч', 'zł/h')}` : `${r.toFixed(3).replace('.', ',')} zł`;
 const stKeys = extra => extra ? Object.keys(C.ST).filter(k => !DB.mainSt.includes(k)) : DB.mainSt;
 const isExtra = k => !DB.mainSt.includes(k);
 // Конструктор: человек сам выбирает 3–5 станций, которые висят сверху на «Пиках».
 function stSheet() {
   const a = STATE.stPick, n = a.length;
-  sheet(`<h3>Свои станции</h3><p>Выбери ${MAIN_MIN}–${MAIN_MAX} рабочих мест, где ты работаешь чаще всего. Они встанут кнопками на вкладке «Пики», остальные — под «Дополнительно». Порядок — как нажимаешь.</p>
+  sheet(`<h3>${T('Свои станции', 'Moje stanowiska')}</h3><p>${T(`Выбери ${MAIN_MIN}–${MAIN_MAX} рабочих мест, где ты работаешь чаще всего. Они встанут кнопками на вкладке «Пики», остальные — под «Дополнительно». Порядок — как нажимаешь.`, `Wybierz ${MAIN_MIN}–${MAIN_MAX} stanowisk, na których pracujesz najczęściej. Staną się przyciskami w zakładce «Piki», reszta trafi do «Więcej». Kolejność — w jakiej klikasz.`)}</p>
     <div class="st-pick">${Object.keys(C.ST).map(k => { const i = a.indexOf(k); return `<button class="st-pb${i >= 0 ? ' on' : ''}" style="--stc:${C.ST[k].col}" data-act="st-pick" data-st="${k}" aria-pressed="${i >= 0}">
-      <span class="st-tag" style="background:${C.ST[k].col}">${C.ST[k].name}</span><span class="st-pb-b"><b>${esc(C.ST[k].full)}</b><small>норма ${C.ST[k].norm}${C.ST[k].hourly ? ', ставка за час' : ''}</small></span><i>${i >= 0 ? i + 1 : ''}</i></button>`; }).join('')}</div>
-    <div class="stack"><button class="btn btn-acc btn-wide" data-act="st-save" ${n >= MAIN_MIN ? '' : 'disabled'}>${n >= MAIN_MIN ? `Сохранить: ${n} ${plural(n, 'станция', 'станции', 'станций')}` : `Выбери ещё ${MAIN_MIN - n}`}</button>
-    <button class="btn btn-ghost btn-wide" data-act="st-default">Как было: ${MAIN_ST.map(k => C.ST[k].name).join(', ')}</button></div>`);
+      <span class="st-tag" style="background:${C.ST[k].col}">${C.ST[k].name}</span><span class="st-pb-b"><b>${esc(C.ST[k].full)}</b><small>${T('норма', 'norma')} ${C.ST[k].norm}${C.ST[k].hourly ? T(', ставка за час', ', stawka za godzinę') : ''}</small></span><i>${i >= 0 ? i + 1 : ''}</i></button>`; }).join('')}</div>
+    <div class="stack"><button class="btn btn-acc btn-wide" data-act="st-save" ${n >= MAIN_MIN ? '' : 'disabled'}>${n >= MAIN_MIN ? `${T('Сохранить', 'Zapisz')}: ${n} ${P(n, 'станция|станции|станций', 'stanowisko|stanowiska|stanowisk')}` : T(`Выбери ещё ${MAIN_MIN - n}`, `Wybierz jeszcze ${MAIN_MIN - n}`)}</button>
+    <button class="btn btn-ghost btn-wide" data-act="st-default">${T('Как было', 'Domyślne')}: ${MAIN_ST.map(k => C.ST[k].name).join(', ')}</button></div>`);
 }
 
 function renderPeaks() {
@@ -597,9 +660,9 @@ function renderPeaks() {
   const segB = k => `<button class="seg-b${k === st ? ' on' : ''}" role="tab" aria-selected="${k === st}" data-act="station" data-st="${k}">${C.ST[k].name}</button>`;
   $('st-seg').innerHTML = stKeys(false).map(segB).join('');
   $('st-more').innerHTML = `<button class="more-b${STATE.stMore ? ' open' : ''}${isExtra(st) ? ' has' : ''}" data-act="st-more" aria-expanded="${!!STATE.stMore}">
-      <span>Дополнительно</span><small>${isExtra(st) ? `${esc(cfg.name)}, ${esc(cfg.full)}` : stKeys(true).map(k => C.ST[k].name).join(' · ')}</small><i aria-hidden="true">${STATE.stMore ? '−' : '+'}</i></button>
+      <span>${T('Дополнительно', 'Więcej')}</span><small>${isExtra(st) ? `${esc(cfg.name)}, ${esc(cfg.full)}` : stKeys(true).map(k => C.ST[k].name).join(' · ')}</small><i aria-hidden="true">${STATE.stMore ? '−' : '+'}</i></button>
     ${STATE.stMore ? `<div class="seg st-seg st-extra" role="tablist">${stKeys(true).map(k => `<button class="seg-b${k === st ? ' on' : ''}" role="tab" aria-selected="${k === st}" data-act="station" data-st="${k}"><b>${C.ST[k].name}</b><small>${esc(C.ST[k].full)}</small></button>`).join('')}</div>
-      <button class="link st-edit" data-act="st-edit">Настроить свои станции</button>` : ''}`;
+      <button class="link st-edit" data-act="st-edit">${T('Настроить свои станции', 'Ustaw swoje stanowiska')}</button>` : ''}`;
 
   const now = new Date(), mk = C.monthKey(now), today = C.shiftToday(now);
   const tEs = DB.entries.filter(e => e.station === st && e.shiftDate === today);
@@ -608,17 +671,17 @@ function renderPeaks() {
   const a = C.monthAgg(DB.entries, st, mk), tier = cfg.tr.findIndex(([lo, hi]) => Math.round(a.pph) >= lo && Math.round(a.pph) <= hi);
   const maxR = cfg.tr[cfg.tr.length - 1][2];
   $('gauge').innerHTML = `
-    <div class="gauge-h"><b>${cfg.name}, ${cfg.full}</b><small>норма ${cfg.norm} в час</small></div>
+    <div class="gauge-h"><b>${cfg.name}, ${cfg.full}</b><small>${T('норма', 'norma')} ${cfg.norm} ${T('в час', 'na godzinę')}</small></div>
     <div class="kpi">
-      <div><b>${tp ? int(tp) : '—'}</b><span>пики сегодня</span></div>
-      <div><b>${th ? h1(tc.pph) : '—'}</b><span>темп</span></div>
-      <div><b>${th ? int(tc.above) : '—'}</b><span>сверх нормы</span></div>
-      <div><b>${th ? h1(th) : '—'}</b><span>часов</span></div>
+      <div><b>${tp ? int(tp) : '—'}</b><span>${T('пики сегодня', 'piki dziś')}</span></div>
+      <div><b>${th ? h1(tc.pph) : '—'}</b><span>${T('темп', 'tempo')}</span></div>
+      <div><b>${th ? int(tc.above) : '—'}</b><span>${T('сверх нормы', 'ponad normę')}</span></div>
+      <div><b>${th ? h1(th) : '—'}</b><span>${T('часов', 'godzin')}</span></div>
     </div>
-    <div class="steps" aria-label="Ступени ставки по темпу месяца">${cfg.tr.map(([lo, hi, r], i) => `<i class="${i < tier ? 'hit' : i === tier && a.H ? 'cur' : ''}" style="height:${18 + Math.round(r / maxR * 82)}%" title="${lo}–${hi === 999 ? '∞' : hi}: ${rateTxt(st, r)}"></i>`).join('')}</div>
-    <div class="steps-l"><span>0</span><span>норма ${cfg.norm}</span><span>${cfg.tr[cfg.tr.length - 1][0]}+</span></div>
-    ${cfg.hourly ? `<p class="hint" style="margin:8px 0 0">Ставка за каждый час на станции, если средний темп месяца выше нормы ${cfg.norm} пачек в час.</p>` : ''}
-    <div class="gauge-f"><div><small style="color:var(--sub)">Премия за месяц, с обецностью</small><br><span style="font-size:13px;color:var(--sub)">${cfg.hourly ? `${h1(a.H)} ч × ${rateTxt(st, a.rate)}` : `${int(a.above)} шт × ${rateTxt(st, a.rate)}`} × ${fx(pfP)}, темп ${h1(a.pph)}</span></div><b>${money(a.bonus * pfP)} zł</b></div>`;
+    <div class="steps" aria-label="${T('Ступени ставки по темпу месяца', 'Progi stawki według tempa miesiąca')}">${cfg.tr.map(([lo, hi, r], i) => `<i class="${i < tier ? 'hit' : i === tier && a.H ? 'cur' : ''}" style="height:${18 + Math.round(r / maxR * 82)}%" title="${lo}–${hi === 999 ? '∞' : hi}: ${rateTxt(st, r)}"></i>`).join('')}</div>
+    <div class="steps-l"><span>0</span><span>${T('норма', 'norma')} ${cfg.norm}</span><span>${cfg.tr[cfg.tr.length - 1][0]}+</span></div>
+    ${cfg.hourly ? `<p class="hint" style="margin:8px 0 0">${T(`Ставка за каждый час на станции, если средний темп месяца выше нормы ${cfg.norm} пачек в час.`, `Stawka za każdą godzinę na stanowisku, jeśli średnie tempo miesiąca przekracza normę ${cfg.norm} paczek na godzinę.`)}</p>` : ''}
+    <div class="gauge-f"><div><small style="color:var(--sub)">${T('Премия за месяц, с обецностью', 'Premia za miesiąc, z obecnością')}</small><br><span style="font-size:13px;color:var(--sub)">${cfg.hourly ? `${h1(a.H)} ${T('ч', 'h')} × ${rateTxt(st, a.rate)}` : `${int(a.above)} ${T('шт', 'szt.')} × ${rateTxt(st, a.rate)}`} × ${fx(pfP)}, ${T('темп', 'tempo')} ${h1(a.pph)}</span></div><b>${money(a.bonus * pfP)} zł</b></div>`;
   renderForm();
   renderPeaksMonth();
 }
@@ -633,20 +696,20 @@ function renderForm() {
   const p = plan(day.slice(0, 7)), span = p && p.days[+day.slice(8)];
   const f = qa.f ?? (span ? span.from : ''), o = qa.o ?? (span ? span.to : '');
   $('qa').innerHTML = `
-    <div class="form-h">Записать смену на ${C.ST[st].name}</div>
+    <div class="form-h">${T('Записать смену на', 'Zapisz zmianę na')} ${C.ST[st].name}</div>
     <div class="chips" style="margin-bottom:10px">
-      <button class="chip${qa.mode === 'today' ? ' on' : ''}" data-act="qa-mode" data-v="today">Сегодняшняя</button>
-      <button class="chip${qa.mode === 'yesterday' ? ' on' : ''}" data-act="qa-mode" data-v="yesterday">Вчерашняя</button>
+      <button class="chip${qa.mode === 'today' ? ' on' : ''}" data-act="qa-mode" data-v="today">${T('Сегодняшняя', 'Dzisiejsza')}</button>
+      <button class="chip${qa.mode === 'yesterday' ? ' on' : ''}" data-act="qa-mode" data-v="yesterday">${T('Вчерашняя', 'Wczorajsza')}</button>
     </div>
-    <label class="field" style="margin-bottom:10px"><span>Дата начала смены</span><input class="in" type="date" id="qa-d" value="${day}" data-in="qa"></label>
+    <label class="field" style="margin-bottom:10px"><span>${T('Дата начала смены', 'Data początku zmiany')}</span><input class="in" type="date" id="qa-d" value="${day}" data-in="qa"></label>
     <div class="grid2">
-      <label class="field"><span>Начало</span><input class="in" type="time" id="qa-f" value="${f}" data-in="qa"></label>
-      <label class="field"><span>Конец</span><input class="in" type="time" id="qa-o" value="${o}" data-in="qa"></label>
+      <label class="field"><span>${T('Начало', 'Początek')}</span><input class="in" type="time" id="qa-f" value="${f}" data-in="qa"></label>
+      <label class="field"><span>${T('Конец', 'Koniec')}</span><input class="in" type="time" id="qa-o" value="${o}" data-in="qa"></label>
     </div>
     <div class="dur" id="qa-dur"></div>
-    <label class="field"><span>Пики, штук</span><input class="in" type="number" inputmode="numeric" min="1" max="100000" id="qa-p" value="${esc(qa.p)}" placeholder="380" data-in="qa"></label>
+    <label class="field"><span>${T('Пики, штук', 'Piki, sztuk')}</span><input class="in" type="number" inputmode="numeric" min="1" max="100000" id="qa-p" value="${esc(qa.p)}" placeholder="380" data-in="qa"></label>
     <div class="preview" id="qa-prev" hidden></div>
-    <button class="btn btn-acc btn-wide" id="qa-save" data-act="qa-save">Сохранить смену</button>`;
+    <button class="btn btn-acc btn-wide" id="qa-save" data-act="qa-save">${T('Сохранить смену', 'Zapisz zmianę')}</button>`;
   qaUpdate();
 }
 
@@ -659,46 +722,46 @@ function qaUpdate(ev) {
   if (id === 'qa-p') qa.p = $('qa-p').value;
   if (qa.mode !== 'custom' && qa.base) { const fix = f && o ? C.shiftDayOf(qa.base, f, o) : qa.base; if (fix !== d.value) d.value = fix; }
   const min = C.minutesBetween(f, o), hrs = min / 60, p = Number($('qa-p').value);
-  $('qa-dur').innerHTML = min ? `<span>Отработано</span><b>${Math.floor(min / 60)} ч ${String(min % 60).padStart(2, '0')} мин</b>` : '';
+  $('qa-dur').innerHTML = min ? `<span>${T('Отработано', 'Przepracowano')}</span><b>${Math.floor(min / 60)} ${T('ч', 'h')} ${String(min % 60).padStart(2, '0')} min</b>` : '';
   const box = $('qa-prev');
   if (!p || !min) { box.hidden = true; return; }
   const c = C.calc(STATE.curSt, p, hrs);
   box.hidden = false;
-  box.innerHTML = `<div><span>Темп</span><b>${h1(c.pph)}</b></div><div><span>Норма</span><b>${int(c.norm)}</b></div><div><span>Сверх</span><b>${int(c.above)}</b></div>
-    <div><span>Ставка</span><b>${C.ST[STATE.curSt].hourly ? `${money(c.rate)}/ч` : c.rate.toFixed(3).replace('.', ',')}</b></div><div class="bn" style="grid-column:span 2"><span>Премия за эту смену, если темп такой весь месяц</span><b>${money(c.bonus)} zł</b></div>`;
+  box.innerHTML = `<div><span>${T('Темп', 'Tempo')}</span><b>${h1(c.pph)}</b></div><div><span>${T('Норма', 'Norma')}</span><b>${int(c.norm)}</b></div><div><span>${T('Сверх', 'Ponad')}</span><b>${int(c.above)}</b></div>
+    <div><span>${T('Ставка', 'Stawka')}</span><b>${C.ST[STATE.curSt].hourly ? `${money(c.rate)}/${T('ч', 'h')}` : c.rate.toFixed(3).replace('.', ',')}</b></div><div class="bn" style="grid-column:span 2"><span>${T('Премия за эту смену, если темп такой весь месяц', 'Premia za tę zmianę, jeśli takie tempo utrzyma się cały miesiąc')}</span><b>${money(c.bonus)} zł</b></div>`;
 }
 
 function qaSave() {
   const f = $('qa-f').value, o = $('qa-o').value, p = Math.round(Number($('qa-p').value)), btn = $('qa-save');
   let day = $('qa-d').value;
   const min = C.minutesBetween(f, o);
-  const fail = t => { btn.textContent = t; btn.classList.add('err'); haptic.err(); setTimeout(() => { btn.textContent = 'Сохранить смену'; btn.classList.remove('err'); }, 1400); };
-  if (!RE_DAY.test(day)) return fail('Укажи дату');
-  if (!min || min > 16 * 60) return fail('Проверь время смены');
-  if (!(p > 0 && p <= 100000)) return fail('Укажи пики');
+  const fail = t => { btn.textContent = t; btn.classList.add('err'); haptic.err(); setTimeout(() => { btn.textContent = T('Сохранить смену', 'Zapisz zmianę'); btn.classList.remove('err'); }, 1400); };
+  if (!RE_DAY.test(day)) return fail(T('Укажи дату', 'Podaj datę'));
+  if (!min || min > 16 * 60) return fail(T('Проверь время смены', 'Sprawdź godziny zmiany'));
+  if (!(p > 0 && p <= 100000)) return fail(T('Укажи пики', 'Podaj piki'));
   if (qa.mode !== 'custom') day = C.shiftDayOf(qa.base || day, f, o);
   qaReset();
   const now = new Date();
   DB.entries.push({ id: Date.now(), station: STATE.curSt, shiftDate: day, peaks: p, hours: Math.round(min / 60 * 100) / 100, from: f, to: o,
     addedAt: now.toTimeString().slice(0, 5) });
   save(); haptic.ok();
-  btn.textContent = 'Сохранено'; btn.classList.add('ok');
+  btn.textContent = T('Сохранено', 'Zapisano'); btn.classList.add('ok');
   setTimeout(() => { renderPeaks(); }, 700);
   pushRank();
-  toast(`Записано: ${p} шт, ${C.ST[STATE.curSt].name}`);
+  toast(`${T('Записано', 'Zapisano')}: ${p} ${T('шт', 'szt.')}, ${C.ST[STATE.curSt].name}`);
 }
 
 function renderPeaksMonth() {
   const mk = C.monthKey(new Date());
   const es = DB.entries.filter(e => e.shiftDate.slice(0, 7) === mk);
-  if (!es.length) { $('peaks-month').innerHTML = `<div class="empty"><b>Записей пока нет</b>Первая смена появится здесь.</div>`; return; }
+  if (!es.length) { $('peaks-month').innerHTML = `<div class="empty"><b>${T('Записей пока нет', 'Brak wpisów')}</b>${T('Первая смена появится здесь.', 'Pierwsza zmiana pojawi się tutaj.')}</div>`; return; }
   const by = {}; es.forEach(e => (by[e.shiftDate] = by[e.shiftDate] || []).push(e));
   $('peaks-month').innerHTML = Object.keys(by).sort().reverse().map(d => {
     const list = by[d], p = list.reduce((s, e) => s + e.peaks, 0), h = list.reduce((s, e) => s + e.hours, 0);
-    return `<div class="day"><div class="day-h"><b>${esc(dayName(d))}</b><span>${int(p)} шт, ${h1(h)} ч</span></div>
+    return `<div class="day"><div class="day-h"><b>${esc(dayName(d))}</b><span>${int(p)} ${T('шт', 'szt.')}, ${h1(h)} ${T('ч', 'h')}</span></div>
       ${list.map(e => `<div class="ent"><span class="st-tag" style="background:${C.ST[e.station].col}">${C.ST[e.station].name}</span>
-        <span class="ent-b"><b>${int(e.peaks)}</b>шт${e.from ? `, ${e.from}–${e.to}` : ''}, темп ${h1(e.hours ? e.peaks / e.hours : 0)}</span>
-        <button class="x" data-act="del-entry" data-id="${e.id}" aria-label="Удалить запись">×</button></div>`).join('')}</div>`;
+        <span class="ent-b"><b>${int(e.peaks)}</b>${T('шт', 'szt.')}${e.from ? `, ${e.from}–${e.to}` : ''}, ${T('темп', 'tempo')} ${h1(e.hours ? e.peaks / e.hours : 0)}</span>
+        <button class="x" data-act="del-entry" data-id="${e.id}" aria-label="${T('Удалить запись', 'Usuń wpis')}">×</button></div>`).join('')}</div>`;
   }).join('');
 }
 
@@ -711,8 +774,8 @@ function renderSched() {
 
   const teams = STATE.sched ? Object.keys(STATE.sched.teams) : ['dark', 'orange', 'green'];
   const meta = teamMeta(DB.team);
-  $('team-pick').innerHTML = `<div class="teams">${teams.map(t => { const m = teamMeta(t); return `<button class="team-b${t === DB.team ? ' on' : ''}" style="--tc:${TEAM_COL[t] || 'var(--acc)'}" data-act="team" data-v="${t}"><b>${esc(m.label)}</b><small>${esc(m.legend || '')}</small></button>`; }).join('')}</div>
-    <div class="chips" aria-label="Группа">${meta.groups.map(g => `<button class="chip${g === DB.group ? ' on' : ''}" data-act="group" data-v="${g}">${g}</button>`).join('')}</div>`;
+  $('team-pick').innerHTML = `<div class="teams">${teams.map(t => { const m = teamMeta(t); return `<button class="team-b${t === DB.team ? ' on' : ''}" style="--tc:${TEAM_COL[t] || 'var(--acc)'}" data-act="team" data-v="${t}"><b>${esc(m.label)}</b><small>${esc((LANG === 'pl' && m.legend_pl) || m.legend || '')}</small></button>`; }).join('')}</div>
+    <div class="chips" aria-label="${T('Группа', 'Grupa')}">${meta.groups.map(g => `<button class="chip${g === DB.group ? ' on' : ''}" data-act="group" data-v="${g}">${g}</button>`).join('')}</div>`;
   renderCal();
   renderNotify();
 }
@@ -721,9 +784,9 @@ function renderCal() {
   const y = STATE.calY, m = STATE.calM, mk = `${y}-${String(m + 1).padStart(2, '0')}`;
   $('cal-title').textContent = mLabel(mk);
   const p = plan(mk), dim = C.daysInMonth(mk), today = C.iso(new Date());
-  const dows = DB.ws === 'mon' ? ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'] : ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+  const dows = DB.ws === 'mon' ? [...WD.slice(1), WD[0]] : WD;
   let h = dows.map(d => `<div class="dow">${d}</div>`).join('');
-  if (!p) { $('cal-grid').innerHTML = h + `<div class="cal-none">${DB.team === 'green' ? 'График GREEN ещё не внесён. Как только появится — смены и оповещения включатся сами.' : 'На этот месяц графика нет.'}</div>`; $('cal-legend').innerHTML = ''; return; }
+  if (!p) { $('cal-grid').innerHTML = h + `<div class="cal-none">${DB.team === 'green' ? T('График GREEN ещё не внесён. Как только появится — смены и оповещения включатся сами.', 'Grafik GREEN nie jest jeszcze dodany. Gdy się pojawi, zmiany i powiadomienia włączą się same.') : T('На этот месяц графика нет.', 'Na ten miesiąc nie ma grafiku.')}</div>`; $('cal-legend').innerHTML = ''; return; }
   const first = new Date(y, m, 1).getDay(), off = DB.ws === 'mon' ? (first + 6) % 7 : first;
   for (let i = 0; i < off; i++) h += '<div class="cd e"></div>';
   const ovtDays = {}; DB.ovt.filter(o => o.date.slice(0, 7) === mk).forEach(o => { ovtDays[+o.date.slice(8)] = (ovtDays[+o.date.slice(8)] || 0) + o.hours; });
@@ -732,25 +795,25 @@ function renderCal() {
   for (let d = 1; d <= dim; d++) {
     const day = `${mk}-${String(d).padStart(2, '0')}`, span = p.days[d], isU = DB.urlop[mk]?.[d], isA = DB.absent[mk]?.[d], isH = p.holidays[String(d)];
     let cls = 'cd', sub = '';
-    if (isA) { cls += ' a'; sub = 'пропуск'; abs++; }
-    else if (isU) { cls += ' u'; sub = 'отпуск'; url++; }
+    if (isA) { cls += ' a'; sub = T('пропуск', 'nieob.'); abs++; }
+    else if (isU) { cls += ' u'; sub = T('отпуск', 'urlop'); url++; }
     else if (isH) { cls += ' h'; sub = 'święto'; hol++; }
     else if (span) { cls += ' w'; sub = `${span.from.slice(0, 2)}–${span.to.slice(0, 2)}`; work++; }
     if (day === today) cls += ' t'; else if (day < today) cls += ' past';
     const pay = pays.days[d];
-    h += `<button class="${cls}" data-act="day" data-d="${d}" aria-label="${d} ${MONTHS_GEN[m]}${sub ? ', ' + sub : ''}${pay ? ', зарплата' : ''}">${d}${sub ? `<small>${sub}</small>` : ''}${ovtDays[d] ? '<span class="dot"></span>' : ''}${pay ? `<span class="payc${pay === 'got' ? ' got' : ''}">zł</span>` : ''}</button>`;
+    h += `<button class="${cls}" data-act="day" data-d="${d}" aria-label="${d} ${MONTHS_GEN[m]}${sub ? ', ' + sub : ''}${pay ? T(', зарплата', ', wypłata') : ''}">${d}${sub ? `<small>${sub}</small>` : ''}${ovtDays[d] ? '<span class="dot"></span>' : ''}${pay ? `<span class="payc${pay === 'got' ? ' got' : ''}">zł</span>` : ''}</button>`;
   }
   $('cal-grid').innerHTML = h;
-  $('cal-legend').innerHTML = `<span><i style="background:var(--acc)"></i>смена ${work}</span><span><i style="background:var(--bad)"></i>праздник ${hol}</span><span><i style="background:#B07CF2"></i>отпуск ${url}</span>${abs ? `<span><i style="background:repeating-linear-gradient(-45deg,var(--warn) 0 2px,transparent 2px 4px);box-shadow:inset 0 0 0 1px var(--warn)"></i>пропуск ${abs}</span>` : ''}<span><i style="background:var(--kraft)"></i>сверхурочные</span>${pays.label ? `<span><i class="lg-pay"></i>${esc(pays.label)}</span>` : ''}`;
+  $('cal-legend').innerHTML = `<span><i style="background:var(--acc)"></i>${T('смена', 'zmiana')} ${work}</span><span><i style="background:var(--bad)"></i>${T('праздник', 'święto')} ${hol}</span><span><i style="background:#B07CF2"></i>${T('отпуск', 'urlop')} ${url}</span>${abs ? `<span><i style="background:repeating-linear-gradient(-45deg,var(--warn) 0 2px,transparent 2px 4px);box-shadow:inset 0 0 0 1px var(--warn)"></i>${T('пропуск', 'nieobecność')} ${abs}</span>` : ''}<span><i style="background:var(--kraft)"></i>${T('сверхурочные', 'nadgodziny')}</span>${pays.label ? `<span><i class="lg-pay"></i>${esc(pays.label)}</span>` : ''}`;
 }
 
 // Зарплата за прошлый месяц в календаре месяца mk: пришла или прогноз.
 function payMarks(mk) {
   const W = C.addMonths(mk, -1), p = paydayFor(W), days = {}, name = MONTHS[+W.slice(5) - 1];
-  if (p.actual && p.actual.slice(0, 7) === mk) { days[+p.actual.slice(8)] = 'got'; return { days, p, label: `зарплата за ${name} пришла` }; }
+  if (p.actual && p.actual.slice(0, 7) === mk) { days[+p.actual.slice(8)] = 'got'; return { days, p, label: T(`зарплата за ${name} пришла`, `wypłata za ${name} przyszła`) }; }
   p.days.filter(x => x.day.slice(0, 7) === mk).forEach(x => { days[+x.day.slice(8)] = x.p; });
   const l = likely(p);
-  return { days, p, label: Object.keys(days).length ? `зарплата за ${name} ${l.day === p.deadline ? 'до' : '≈'} ${+l.day.slice(8)}-го` : '' };
+  return { days, p, label: Object.keys(days).length ? `${T('зарплата за', 'wypłata za')} ${name} ${l.day === p.deadline ? T('до', 'do') : '≈'} ${+l.day.slice(8)}${T('-го', '.')}` : '' };
 }
 
 // Отпуск и пропуск в один день не бывают — отметка одного снимает другое.
@@ -760,13 +823,13 @@ function markDay(kind, other, day) {
   if (DB[kind][mk][d]) delete DB[kind][mk][d];
   else { DB[kind][mk][d] = 1; if (DB[other][mk]) delete DB[other][mk][d]; }
   save(); haptic.ok(); closeSheet(); renderCal(); pushProfile();
-  if (kind === 'absent') { pushRank(); const n = Object.keys(DB.absent[mk] || {}).length; toast(`Пропусков в месяце: ${n}, премия ×${fx(C.premiumFactor(n))}`); }
+  if (kind === 'absent') { pushRank(); const n = Object.keys(DB.absent[mk] || {}).length; toast(`${T('Пропусков в месяце', 'Nieobecności w miesiącu')}: ${n}, ${T('премия', 'premia')} ×${fx(C.premiumFactor(n))}`); }
 }
 
 function payLine(mk, d) {
   const pm = payMarks(mk), v = pm.days[d]; if (!v) return '';
   const name = MONTHS[+pm.p.month.slice(5) - 1];
-  return `<button class="pay-line" data-act="go" data-to="odcinek"><span>zł</span><b>${v === 'got' ? `Зарплата за ${name} пришла в этот день` : v === 1 ? `Зарплата за ${name}: крайний срок` : `Зарплата за ${name}: ${Math.round(v * 100)}%, что придёт к этому дню`}</b><small>${v === 'got' ? 'по отметкам людей' : 'прогноз по правилу «до 10-го» и датам людей'} ›</small></button>`;
+  return `<button class="pay-line" data-act="go" data-to="odcinek"><span>zł</span><b>${v === 'got' ? T(`Зарплата за ${name} пришла в этот день`, `Wypłata za ${name} przyszła tego dnia`) : v === 1 ? T(`Зарплата за ${name}: крайний срок`, `Wypłata za ${name}: ostateczny termin`) : T(`Зарплата за ${name}: ${Math.round(v * 100)}%, что придёт к этому дню`, `Wypłata za ${name}: ${Math.round(v * 100)}%, że przyjdzie do tego dnia`)}</b><small>${v === 'got' ? T('по отметкам людей', 'według zgłoszeń ludzi') : T('прогноз по правилу «до 10-го» и датам людей', 'prognoza: reguła «do 10.» i daty od ludzi')} ›</small></button>`;
 }
 
 function daySheet(d) {
@@ -775,55 +838,55 @@ function daySheet(d) {
   const ov = DB.ovt.filter(o => o.date === day);
   const absN = Object.keys(DB.absent[mk] || {}).length;
   sheet(`<h3>${esc(dayName(day))}</h3>
-    <p>${hol ? `Праздник: ${esc(hol)}` : span ? `Смена ${p.label} ${span.from}–${span.to}` : 'Выходной по графику'}${isU ? '. Отмечен отпуск.' : ''}${isA ? '. Отмечен пропуск.' : ''}</p>
+    <p>${hol ? `${T('Праздник', 'Święto')}: ${esc(hol)}` : span ? `${T('Смена', 'Zmiana')} ${p.label} ${span.from}–${span.to}` : T('Выходной по графику', 'Wolne według grafiku')}${isU ? T('. Отмечен отпуск.', '. Zaznaczony urlop.') : ''}${isA ? T('. Отмечен пропуск.', '. Zaznaczona nieobecność.') : ''}</p>
     ${payLine(mk, d)}
     <div class="grid2">
-      <button class="btn ${isU ? 'btn-ghost' : 'btn-acc'}" data-act="urlop" data-day="${day}">${isU ? 'Снять отпуск' : 'Отпуск'}</button>
-      ${span ? `<button class="btn ${isA ? 'btn-ghost' : 'btn-warn'}" data-act="absent" data-day="${day}">${isA ? 'Снять пропуск' : 'Пропуск'}</button>` : '<span></span>'}
+      <button class="btn ${isU ? 'btn-ghost' : 'btn-acc'}" data-act="urlop" data-day="${day}">${isU ? T('Снять отпуск', 'Usuń urlop') : T('Отпуск', 'Urlop')}</button>
+      ${span ? `<button class="btn ${isA ? 'btn-ghost' : 'btn-warn'}" data-act="absent" data-day="${day}">${isA ? T('Снять пропуск', 'Usuń nieobecność') : T('Пропуск', 'Nieobecność')}</button>` : '<span></span>'}
     </div>
-    ${span ? `<p class="hint" style="margin-top:8px">Пропуск — смена не отработана без отпуска (L4, прогул). Без пропусков премия ×1,25, с одним ×0,80, с двумя и больше премии нет. Сейчас в месяце ${absN} → ×${fx(C.premiumFactor(absN))}.</p>` : ''}
-    <div style="margin-top:16px;font:600 18px var(--f-num)">Сверхурочные</div>
-    ${ov.map(o => `<div class="ent"><span class="ent-b"><b>${h1(o.hours)} ч</b>+${o.pct}%${o.night ? ', ночью' : ''}</span><button class="x" data-act="del-ovt" data-id="${o.id}" aria-label="Удалить">×</button></div>`).join('')}
+    ${span ? `<p class="hint" style="margin-top:8px">${T(`Пропуск — смена не отработана без отпуска (L4, прогул). Без пропусков премия ×1,25, с одним ×0,80, с двумя и больше премии нет. Сейчас в месяце ${absN} → ×${fx(C.premiumFactor(absN))}.`, `Nieobecność — zmiana nieprzepracowana bez urlopu (L4, nieusprawiedliwiona). Bez nieobecności premia ×1,25, z jedną ×0,80, z dwiema i więcej premii brak. Teraz w miesiącu ${absN} → ×${fx(C.premiumFactor(absN))}.`)}</p>` : ''}
+    <div style="margin-top:16px;font:600 18px var(--f-num)">${T('Сверхурочные', 'Nadgodziny')}</div>
+    ${ov.map(o => `<div class="ent"><span class="ent-b"><b>${h1(o.hours)} ${T('ч', 'h')}</b>+${o.pct}%${o.night ? T(', ночью', ', w nocy') : ''}</span><button class="x" data-act="del-ovt" data-id="${o.id}" aria-label="${T('Удалить', 'Usuń')}">×</button></div>`).join('')}
     <div class="grid2" style="margin-top:10px">
-      <label class="field"><span>Часов</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0.5" max="16" id="ov-h" placeholder="2"></label>
-      <div class="field"><span>Доплата</span><div class="chips" id="ov-pct"><button class="chip on" data-act="ov-pct" data-v="50">50%</button><button class="chip" data-act="ov-pct" data-v="100">100%</button></div></div>
+      <label class="field"><span>${T('Часов', 'Godzin')}</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0.5" max="16" id="ov-h" placeholder="2"></label>
+      <div class="field"><span>${T('Доплата', 'Dodatek')}</span><div class="chips" id="ov-pct"><button class="chip on" data-act="ov-pct" data-v="50">50%</button><button class="chip" data-act="ov-pct" data-v="100">100%</button></div></div>
     </div>
-    <label class="switch" style="margin-top:6px"><span><b>Часы в 22:00–06:00</b><small>добавится ночная доплата</small></span><span class="tg"><input type="checkbox" id="ov-n" ${span && C.nightMinutes(span.from, span.to) ? 'checked' : ''}><i></i></span></label>
-    <div class="stack"><button class="btn btn-acc btn-wide" data-act="add-ovt" data-day="${day}">Добавить сверхурочные</button><button class="btn btn-ghost btn-wide" data-act="sheet-close">Готово</button></div>`);
+    <label class="switch" style="margin-top:6px"><span><b>${T('Часы в 22:00–06:00', 'Godziny 22:00–06:00')}</b><small>${T('добавится ночная доплата', 'doliczy się dodatek nocny')}</small></span><span class="tg"><input type="checkbox" id="ov-n" ${span && C.nightMinutes(span.from, span.to) ? 'checked' : ''}><i></i></span></label>
+    <div class="stack"><button class="btn btn-acc btn-wide" data-act="add-ovt" data-day="${day}">${T('Добавить сверхурочные', 'Dodaj nadgodziny')}</button><button class="btn btn-ghost btn-wide" data-act="sheet-close">${T('Готово', 'Gotowe')}</button></div>`);
   STATE.ovPct = 50;
 }
 
 function renderNotify() {
   const card = $('notify-card');
   if (!STATE.verified) {
-    card.innerHTML = `<p style="color:var(--sub);font-size:14px">Оповещения присылает бот. Открой трекер кнопкой из бота — тогда здесь появятся настройки.</p>
-      <button class="btn btn-acc btn-wide" style="margin-top:12px" data-act="open-bot">Открыть бота</button>`;
+    card.innerHTML = `<p style="color:var(--sub);font-size:14px">${T('Оповещения присылает бот. Открой трекер кнопкой из бота — тогда здесь появятся настройки.', 'Powiadomienia wysyła bot. Otwórz tracker przyciskiem z bota — wtedy pojawią się tu ustawienia.')}</p>
+      <button class="btn btn-acc btn-wide" style="margin-top:12px" data-act="open-bot">${T('Открыть бота', 'Otwórz bota')}</button>`;
     return;
   }
   const row = (k, t, s) => `<label class="switch"><span><b>${t}</b><small>${s}</small></span><span class="tg"><input type="checkbox" data-act="notify" data-k="${k}" ${DB.notify[k] ? 'checked' : ''}><i></i></span></label>`;
-  card.innerHTML = row('h2', 'За 2 часа до смены', 'чтобы спокойно собраться') +
-    row('h1', 'За час до смены', 'пора выходить к автобусу') +
-    row('peaks', 'После смены', 'напомнить записать пики') +
-    row('pay', '10-го числа', 'кошелёк обновился, пора посчитать новый месяц') +
-    `<button class="btn btn-ghost btn-wide" style="margin-top:6px" data-act="ics">Добавить смены в календарь телефона</button>`;
+  card.innerHTML = row('h2', T('За 2 часа до смены', '2 godziny przed zmianą'), T('чтобы спокойно собраться', 'żeby spokojnie się przygotować')) +
+    row('h1', T('За час до смены', 'Godzinę przed zmianą'), T('пора выходить к автобусу', 'czas wychodzić na autobus')) +
+    row('peaks', T('После смены', 'Po zmianie'), T('напомнить записать пики', 'przypomnieć o zapisaniu pików')) +
+    row('pay', T('10-го числа', '10. dnia miesiąca'), T('кошелёк обновился, пора посчитать новый месяц', 'portfel się odświeżył, czas policzyć nowy miesiąc')) +
+    `<button class="btn btn-ghost btn-wide" style="margin-top:6px" data-act="ics">${T('Добавить смены в календарь телефона', 'Dodaj zmiany do kalendarza w telefonie')}</button>`;
 }
 
 const BUS = [
-  { t: 'Маршрут А', s: 'Hoża, Jana z Czarnolasu', since: '27.10.2025', c: '#EF5B4C', shifts: [
+  { t: 'А|A', s: 'Hoża, Jana z Czarnolasu', since: '27.10.2025', c: '#EF5B4C', shifts: [
     { n: 'Zmiana 1', go: ['04:40', [['Hoża 21', '04:43'], ['Jana z Czarnolasu 11', '04:46'], ['Pasterska 11', '04:48'], ['Łabędzia 32', '04:50'], ['Krasińskiego 11', '04:52'], ['Kołłątaja 22', '04:54'], ['Sczanieckiej 21', '04:54'], ['Wyszyńskiego 11', '05:00'], ['AUTODOC Kablowa 1', '05:40', 'work']]],
       back: ['14:20', ['AUTODOC Kablowa 1', 'Plac Słowiański 11', 'Sczanieckiej 22', 'Kołłątaja 21', 'Krasińskiego 12', 'Łabędzia 31', 'Pasterska 12', 'Jana z Czarnolasu 12', 'Hoża 22']] },
     { n: 'Zmiana 2', go: ['12:40', [['Hoża 21', '12:40'], ['Jana z Czarnolasu 11', '12:43'], ['Pasterska 11', '12:46'], ['Łabędzia 32', '12:48'], ['Krasińskiego 11', '12:51'], ['Kołłątaja 22', '12:55'], ['Sczanieckiej 21', '12:55'], ['Wyszyńskiego 11', '13:03'], ['AUTODOC Kablowa 1', '13:40', 'work']]],
       back: ['22:20', ['AUTODOC Kablowa 1', 'Plac Słowiański 11', 'Sczanieckiej 22', 'Kołłątaja 21', 'Krasińskiego 12', 'Łabędzia 31', 'Pasterska 12', 'Jana z Czarnolasu 12', 'Hoża 22']] },
     { n: 'Zmiana 3, DARK', dark: 1, go: ['20:50', [['Hoża 21', '20:50'], ['Jana z Czarnolasu 11', '20:53'], ['Pasterska 11', '20:56'], ['Łabędzia 32', '20:58'], ['Krasińskiego 11', '21:00'], ['Kołłątaja 22', '21:02'], ['Sczanieckiej 21', '21:05'], ['Wyszyńskiego 11', '21:10'], ['Basen Górniczy (przy drodze głównej)', '21:17'], ['AUTODOC Kablowa 1', '21:40', 'work']]],
       back: ['06:20', ['AUTODOC Kablowa 1', 'Plac Słowiański 11', 'Basen Górniczy (przy drodze głównej)', '*Wyszyńskiego 22', 'Sczanieckiej 22', 'Kołłątaja 21', 'Krasińskiego 12', 'Łabędzia 31', 'Pasterska 12', 'Jana z Czarnolasu 12', 'Hoża 22']] }] },
-  { t: 'Маршрут Б', s: 'Kleeberga, Osiedle Kaliny', since: '02.09.2024', c: '#F2C230', shifts: [
+  { t: 'Б|B', s: 'Kleeberga, Osiedle Kaliny', since: '02.09.2024', c: '#F2C230', shifts: [
     { n: 'Zmiana 1', go: ['04:40', [['Kleeberga 11', '04:45'], ['Osiedle Kaliny 11', '04:47'], ['Osiedle Przyjaźni 11', '04:51'], ['Ku Słońcu 11', '05:00'], ['Plac Kościuszki 33', '05:05'], ['Wyszyńskiego 11', '05:05'], ['AUTODOC Kablowa 1', '05:40', 'work']]],
       back: ['14:20', ['AUTODOC Kablowa 1', 'Plac Słowiański 11', 'Plac Kościuszki', 'Ku Słońcu', 'Osiedle Przyjaźni', 'Osiedle Kaliny', 'Kleeberga']] },
     { n: 'Zmiana 2', go: ['12:35', [['Kleeberga 11', '12:35'], ['Osiedle Kaliny 11', '12:40'], ['Osiedle Przyjaźni 11', '12:42'], ['Ku Słońcu 11', '12:46'], ['Plac Kościuszki 33', '12:55'], ['Wyszyńskiego 11', '13:00'], ['AUTODOC Kablowa 1', '13:40', 'work']]],
       back: ['22:20', ['AUTODOC Kablowa 1', 'Plac Słowiański 11', 'Plac Kościuszki', 'Ku Słońcu', 'Osiedle Przyjaźni', 'Osiedle Kaliny', 'Kleeberga']] },
     { n: 'Zmiana 3, DARK', dark: 1, go: ['20:45', [['Kleeberga 11', '20:45'], ['Osiedle Kaliny 11', '20:48'], ['Osiedle Przyjaźni 11', '20:50'], ['Ku Słońcu 11', '20:54'], ['Reda 21', '20:59'], ['Mieszka I 12', '21:01', 'hi'], ['Plac Kościuszki 33', '21:05'], ['Wyszyńskiego 11', '21:10'], ['AUTODOC Kablowa 1', '21:40', 'work']]],
       back: ['06:20', ['AUTODOC Kablowa 1', 'Plac Słowiański 11', 'Wyszyńskiego 16', 'Plac Kościuszki 35', '*Mieszka I', 'Reda 11', 'Ku Słońcu 31', 'Osiedle Przyjaźni 12', 'Derdowskiego 21', 'Kleeberga 12']] }] },
-  { t: 'Маршрут В', s: 'Centrum, Wyszyńskiego', since: '02.09.2024', c: '#4C8DF6', shifts: [
+  { t: 'В|C', s: 'Centrum, Wyszyńskiego', since: '02.09.2024', c: '#4C8DF6', shifts: [
     { n: 'Zmiana 1', go: ['05:15', [['Wyszyńskiego 11', '05:15'], ['Basen Górniczy (przy drodze głównej)', '05:20'], ['Plac Słowiański 12', '05:26'], ['AUTODOC Kablowa 1', '05:40', 'work']]],
       back: ['14:20', ['AUTODOC Kablowa 1', 'Plac Słowiański 11', 'Basen Górniczy (przy drodze głównej)', 'Wyszyńskiego 16']] },
     { n: 'Zmiana 2', go: ['13:03', [['Wyszyńskiego 11', '13:03'], ['Basen Górniczy (przy drodze głównej)', '13:08'], ['Plac Słowiański 12', '13:15'], ['AUTODOC Kablowa 1', '13:40', 'work']]],
@@ -835,13 +898,13 @@ function renderBus() {
   const open = STATE.bus;
   $('sched-bus').innerHTML = BUS.map((r, i) => `<div class="card" style="margin-bottom:8px">
     <button class="bus-b" data-act="bus" data-i="${i}" aria-expanded="${open === i}"><span class="bus-c" style="background:${r.c}"></span>
-      <span style="flex:1"><b style="font:700 19px var(--f-num)">${r.t}</b><br><small style="color:var(--sub)">${esc(r.s)}, с ${r.since}</small></span><span style="color:var(--sub);font-size:20px">${open === i ? '−' : '+'}</span></button>
+      <span style="flex:1"><b style="font:700 19px var(--f-num)">${T('Маршрут', 'Trasa')} ${r.t.split('|')[LANG === 'pl' ? 1 : 0]}</b><br><small style="color:var(--sub)">${esc(r.s)}, ${T('с', 'od')} ${r.since}</small></span><span style="color:var(--sub);font-size:20px">${open === i ? '−' : '+'}</span></button>
     ${open === i ? r.shifts.filter(s => STATE.busAll || DB.team !== 'dark' || s.dark).map(s => `
-      <div class="leg-h"><span>${s.dark ? '🌙 ' : ''}${esc(s.n)}, туда</span><small>выезд ${s.go[0]}</small></div>
+      <div class="leg-h"><span>${s.dark ? '🌙 ' : ''}${esc(s.n)}, ${T('туда', 'tam')}</span><small>${T('выезд', 'odjazd')} ${s.go[0]}</small></div>
       <ul class="stops">${s.go[1].map(([n, t, k]) => `<li class="${k || ''}"><span>${esc(n)}</span>${t ? `<b>${t}</b>` : ''}</li>`).join('')}</ul>
-      <div class="leg-h"><span>Обратно</span><small>отъезд ${s.back[0]}</small></div>
+      <div class="leg-h"><span>${T('Обратно', 'Powrót')}</span><small>${T('отъезд', 'odjazd')} ${s.back[0]}</small></div>
       <ul class="stops">${s.back[1].map((n, j) => `<li class="${j === 0 ? 'work' : n[0] === '*' ? 'hi' : ''}"><span>${esc(n.replace(/^\*/, ''))}</span></li>`).join('')}</ul>`).join('')
-      + (DB.team === 'dark' && !STATE.busAll ? `<button class="link" style="margin-top:10px" data-act="bus-all">Показать дневные смены</button>` : '') : ''}
+      + (DB.team === 'dark' && !STATE.busAll ? `<button class="link" style="margin-top:10px" data-act="bus-all">${T('Показать дневные смены', 'Pokaż zmiany dzienne')}</button>` : '') : ''}
   </div>`).join('');
 }
 
@@ -857,7 +920,7 @@ function walletRollover(now = new Date()) {
     else DB.wallet.hist.unshift({ month: cur.month, netto: r.netto, brutto: r.brutto, bonus: r.parts.bonus, savedAt: cur.savedAt, var: v.var, hours: v.hours });
     DB.wallet.hist = DB.wallet.hist.slice(0, 36);
     DB.wallet.cur = null; DB.wallet.draft = null;
-    toastLater(`Кошелёк обновлён: ${MONTHS[+cur.month.slice(5) - 1]} ушёл в историю, считаем ${MONTHS[+W.slice(5) - 1]}`);
+    toastLater(T(`Кошелёк обновлён: ${MONTHS[+cur.month.slice(5) - 1]} ушёл в историю, считаем ${MONTHS[+W.slice(5) - 1]}`, `Portfel odświeżony: ${MONTHS[+cur.month.slice(5) - 1]} trafił do historii, liczymy ${MONTHS[+W.slice(5) - 1]}`));
   }
   if (DB.wallet.draft && DB.wallet.draft.month !== W) DB.wallet.draft = null;
 }
@@ -947,72 +1010,72 @@ function renderWallet(fresh = true) {
   renderSlip(v, until, left, bonusChanged);
   renderWalletForm(v);
   renderBreakdown(v.res);
-  $('wallet-hist').innerHTML = DB.wallet.hist.length ? DB.wallet.hist.map(h => { const lv = h.slip ? slipLevel(h.month) : null; return `<${h.slip ? 'button data-act="slip-view" data-m="' + h.month + '"' : 'div'} class="whist"><div><b>${mLabel(h.month)}${lv ? ` <span class="oc-chip ${lv}">odcinek ${LV[lv].ic}</span>` : ''}</b><small>брутто ${money(h.brutto)} zł, премия ${money(h.bonus)} zł${h.calc ? `, трекер насчитал ${money(h.calc.netto)}` : ''}</small>${lv ? slipShort(h.month) : ''}</div><div class="v">${money(h.netto)}<small>zł на руки</small></div></${h.slip ? 'button' : 'div'}>`; }).join('')
-    : `<div class="empty">Здесь появятся прошлые месяцы. Расчёт переходит сюда 10-го числа.</div>`;
-  if (bonusChanged) toast(`Премия обновлена: ${money(v.res.parts.bonus)} zł`);
+  $('wallet-hist').innerHTML = DB.wallet.hist.length ? DB.wallet.hist.map(h => { const lv = h.slip ? slipLevel(h.month) : null; return `<${h.slip ? 'button data-act="slip-view" data-m="' + h.month + '"' : 'div'} class="whist"><div><b>${mLabel(h.month)}${lv ? ` <span class="oc-chip ${lv}">odcinek ${LV[lv].ic}</span>` : ''}</b><small>${T('брутто', 'brutto')} ${money(h.brutto)} zł, ${T('премия', 'premia')} ${money(h.bonus)} zł${h.calc ? `, ${T('трекер насчитал', 'tracker policzył')} ${money(h.calc.netto)}` : ''}</small>${lv ? slipShort(h.month) : ''}</div><div class="v">${money(h.netto)}<small>${T('zł на руки', 'zł na rękę')}</small></div></${h.slip ? 'button' : 'div'}>`; }).join('')
+    : `<div class="empty">${T('Здесь появятся прошлые месяцы. Расчёт переходит сюда 10-го числа.', 'Tu pojawią się poprzednie miesiące. Wyliczenie trafia tutaj 10. dnia miesiąca.')}</div>`;
+  if (bonusChanged) toast(`${T('Премия обновлена', 'Premia zaktualizowana')}: ${money(v.res.parts.bonus)} zł`);
 }
 
 function renderSlip(v, until, left, flash) {
   const [, um, ud] = until.split('-');
   $('slip').innerHTML = `
-    <div class="slip-top"><span>Wypłata за ${MONTHS[+v.W.slice(5) - 1]} ${v.W.slice(0, 4)}</span><span class="slip-due">до ${ud}.${um}, ${left} ${plural(left, 'день', 'дня', 'дней')}</span></div>
+    <div class="slip-top"><span>Wypłata ${T('за', 'za')} ${MONTHS[+v.W.slice(5) - 1]} ${v.W.slice(0, 4)}</span><span class="slip-due">${T('до', 'do')} ${ud}.${um}, ${left} ${P(left, 'день|дня|дней', 'dzień|dni|dni')}</span></div>
     <div class="slip-num"><span class="num" id="slip-netto" data-v="${STATE.slipV || 0}">0</span><small>zł</small></div>
-    <div class="slip-sub">${v.dirty ? 'есть несохранённые правки, нажми «Обновить расчёт»' : v.saved ? `на руки, расчёт сохранён ${esc(fmtD((DB.wallet.cur.savedAt || '').slice(0, 10)))}` : 'черновик: проверь часы и нажми «Сохранить расчёт»'}</div>
-    <div class="slip-bonus${flash ? ' fresh' : ''}"><span>Премия, брутто<br><small style="opacity:.75">пики ${money(v.res.bonusBase)} × ${fx(v.res.premiumFactor)} — ${absText(v.res.premiumFactor, salaryInput(v.inp).absences)}${v.res.indirect ? ` + Indirect ${money(v.res.indirect)}` : ''}</small></span><b>${money(v.res.parts.bonus)} zł</b></div>`;
+    <div class="slip-sub">${v.dirty ? T('есть несохранённые правки, нажми «Обновить расчёт»', 'są niezapisane zmiany, naciśnij «Zaktualizuj wyliczenie»') : v.saved ? `${T('на руки, расчёт сохранён', 'na rękę, wyliczenie zapisane')} ${esc(fmtD((DB.wallet.cur.savedAt || '').slice(0, 10)))}` : T('черновик: проверь часы и нажми «Сохранить расчёт»', 'szkic: sprawdź godziny i naciśnij «Zapisz wyliczenie»')}</div>
+    <div class="slip-bonus${flash ? ' fresh' : ''}"><span>${T('Премия, брутто', 'Premia, brutto')}<br><small style="opacity:.75">${T('пики', 'piki')} ${money(v.res.bonusBase)} × ${fx(v.res.premiumFactor)} — ${absText(v.res.premiumFactor, salaryInput(v.inp).absences)}${v.res.indirect ? ` + Indirect ${money(v.res.indirect)}` : ''}</small></span><b>${money(v.res.parts.bonus)} zł</b></div>`;
   countUp($('slip-netto'), v.res.netto); STATE.slipV = v.res.netto;
 }
 
 const fx = f => f.toFixed(2).replace('.', ',');           // множитель премии: 1,25 / 0,80 / 0
-const absText = (f, n) => n ? `${n} ${plural(n, 'пропуск', 'пропуска', 'пропусков')}${f ? '' : ', премии нет'}` : 'без пропусков +25%';
+const absText = (f, n) => n ? `${n} ${P(n, 'пропуск|пропуска|пропусков', 'nieobecność|nieobecności|nieobecności')}${f ? '' : T(', премии нет', ', bez premii')}` : T('без пропусков +25%', 'bez nieobecności +25%');
 
 function renderWalletForm(v) {
   const p = DB.profile, ys = youngFor(v.W), a = autoHours(v.W), i = v.inp;
-  const ageLine = !p.birthOk ? `<div class="age-ok n">Пока возраст не подтверждён, PIT считается как для 26+.</div>`
-    : ys.status === 'yes' ? `<div class="age-ok y"><b>${ys.age}</b> лет: ulga dla młodych, PIT 0% до лимита ${int(C.TAX.YOUNG_LIMIT)} zł в год.</div>`
-    : ys.status === 'partial' ? `<div class="age-ok p">В этом месяце тебе исполняется 26 (${fmtD(ys.b26)}). Ulga действует на выплаты до дня рождения — итог в pasku может отличаться.</div>`
-    : `<div class="age-ok n"><b>${ys.age}</b> лет: PIT 12%, kwota zmniejszająca ${p.pit2 ? '300 zł' : 'не применяется'}.</div>`;
+  const ageLine = !p.birthOk ? `<div class="age-ok n">${T('Пока возраст не подтверждён, PIT считается как для 26+.', 'Dopóki wiek nie jest potwierdzony, PIT liczy się jak dla 26+.')}</div>`
+    : ys.status === 'yes' ? `<div class="age-ok y"><b>${ys.age}</b> ${T('лет', 'lat')}: ulga dla młodych, PIT 0% ${T('до лимита', 'do limitu')} ${int(C.TAX.YOUNG_LIMIT)} ${T('zł в год', 'zł rocznie')}.</div>`
+    : ys.status === 'partial' ? `<div class="age-ok p">${T(`В этом месяце тебе исполняется 26 (${fmtD(ys.b26)}). Ulga действует на выплаты до дня рождения — итог в pasku может отличаться.`, `W tym miesiącu kończysz 26 lat (${fmtD(ys.b26)}). Ulga obejmuje wypłaty do dnia urodzin — kwota w pasku może się różnić.`)}</div>`
+    : `<div class="age-ok n"><b>${ys.age}</b> ${T('лет', 'lat')}: PIT 12%, kwota zmniejszająca ${p.pit2 ? '300 zł' : T('не применяется', 'nie jest stosowana')}.</div>`;
   const rateChip = (m, t) => `<button class="chip${p.rateMode === m ? ' on' : ''}" data-act="rate" data-v="${m}">${t}</button>`;
   $('wallet-form').innerHTML = `
-    <div class="card wstep"><div class="wstep-h"><i>1</i><b>Возраст</b><small>для налога PIT</small></div>
-      <label class="field"><span>Дата рождения</span><input class="in" type="date" id="w-birth" value="${p.birth}" max="${C.iso(new Date())}" data-in="birth"></label>
-      <label class="check" style="margin:12px 0 0"><input type="checkbox" id="w-birth-ok" data-act="birth-ok" ${p.birthOk ? 'checked' : ''} ${p.birth ? '' : 'disabled'}><span>Подтверждаю, что дата рождения верна</span></label>
+    <div class="card wstep"><div class="wstep-h"><i>1</i><b>${T('Возраст', 'Wiek')}</b><small>${T('для налога PIT', 'dla podatku PIT')}</small></div>
+      <label class="field"><span>${T('Дата рождения', 'Data urodzenia')}</span><input class="in" type="date" id="w-birth" value="${p.birth}" max="${C.iso(new Date())}" data-in="birth"></label>
+      <label class="check" style="margin:12px 0 0"><input type="checkbox" id="w-birth-ok" data-act="birth-ok" ${p.birthOk ? 'checked' : ''} ${p.birth ? '' : 'disabled'}><span>${T('Подтверждаю, что дата рождения верна', 'Potwierdzam, że data urodzenia jest poprawna')}</span></label>
       ${ageLine}${ys.status === 'yes' || ys.status === 'partial' ? ytdBlock(v) : ''}</div>
 
-    <div class="card wstep"><div class="wstep-h"><i>2</i><b>Ставка в час</b><small>брутто</small></div>
-      <div class="chips">${rateChip('33.00', '33,00 AutoDoc')}${rateChip('31.40', '31,40 мин.')}${rateChip('35.00', '35,00')}${rateChip('own', 'Своя')}</div>
-      ${p.rateMode === 'own' ? `<label class="field" style="margin-top:10px"><span>Своя ставка, zł/ч</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="500" id="w-rate" value="${p.rate}" data-in="w"></label>` : ''}</div>
+    <div class="card wstep"><div class="wstep-h"><i>2</i><b>${T('Ставка в час', 'Stawka za godzinę')}</b><small>brutto</small></div>
+      <div class="chips">${rateChip('33.00', '33,00 AutoDoc')}${rateChip('31.40', T('31,40 мин.', '31,40 min.'))}${rateChip('35.00', '35,00')}${rateChip('own', T('Своя', 'Własna'))}</div>
+      ${p.rateMode === 'own' ? `<label class="field" style="margin-top:10px"><span>${T('Своя ставка, zł/ч', 'Własna stawka, zł/h')}</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="500" id="w-rate" value="${p.rate}" data-in="w"></label>` : ''}</div>
 
-    <div class="card wstep"><div class="wstep-h"><i>3</i><b>Часы за ${MONTHS[+v.W.slice(5) - 1]}</b></div>
-      ${a.has ? `<div class="auto"><span>По графику ${esc(teamMeta(DB.team).label)} ${DB.group}: ${a.shifts} ${plural(a.shifts, 'смена', 'смены', 'смен')}, ${h1(a.hours)} ч, ночных ${h1(a.night)}</span><button class="link" data-act="w-auto">Подставить</button></div>` : ''}
+    <div class="card wstep"><div class="wstep-h"><i>3</i><b>${T('Часы за', 'Godziny za')} ${MONTHS[+v.W.slice(5) - 1]}</b></div>
+      ${a.has ? `<div class="auto"><span>${T('По графику', 'Według grafiku')} ${esc(teamMeta(DB.team).label)} ${DB.group}: ${a.shifts} ${P(a.shifts, 'смена|смены|смен', 'zmiana|zmiany|zmian')}, ${h1(a.hours)} ${T('ч, ночных', 'h, nocnych')} ${h1(a.night)}</span><button class="link" data-act="w-auto">${T('Подставить', 'Wstaw')}</button></div>` : ''}
       <div class="grid3">
-        <label class="field"><span>Отработано</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-hours" value="${i.hours}" data-in="w"></label>
-        <label class="field"><span>Из них ночью</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-night" value="${i.nightHours}" data-in="w"></label>
-        <label class="field"><span>Отпуск, ч</span><input class="in" type="number" inputmode="decimal" step="1" min="0" id="w-urlop" value="${i.urlopHours}" data-in="w"></label>
+        <label class="field"><span>${T('Отработано', 'Przepracowano')}</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-hours" value="${i.hours}" data-in="w"></label>
+        <label class="field"><span>${T('Из них ночью', 'W tym w nocy')}</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-night" value="${i.nightHours}" data-in="w"></label>
+        <label class="field"><span>${T('Отпуск, ч', 'Urlop, h')}</span><input class="in" type="number" inputmode="decimal" step="1" min="0" id="w-urlop" value="${i.urlopHours}" data-in="w"></label>
       </div>
       ${urlopBlock(v.W, i)}${absBlock(v)}</div>
 
-    <div class="card wstep"><div class="wstep-h"><i>4</i><b>Сверхурочные</b><small>из календаря: ${h1(a.o50 + a.o100)} ч</small></div>
+    <div class="card wstep"><div class="wstep-h"><i>4</i><b>${T('Сверхурочные', 'Nadgodziny')}</b><small>${T('из календаря', 'z kalendarza')}: ${h1(a.o50 + a.o100)} ${T('ч', 'h')}</small></div>
       <div class="grid3">
-        <label class="field"><span>+50%, ч</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-o50" value="${i.ovt50}" data-in="w"></label>
-        <label class="field"><span>+100%, ч</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-o100" value="${i.ovt100}" data-in="w"></label>
-        <label class="field"><span>Из них ночью</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-on" value="${i.ovtNight}" data-in="w"></label>
+        <label class="field"><span>+50%, ${T('ч', 'h')}</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-o50" value="${i.ovt50}" data-in="w"></label>
+        <label class="field"><span>+100%, ${T('ч', 'h')}</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-o100" value="${i.ovt100}" data-in="w"></label>
+        <label class="field"><span>${T('Из них ночью', 'W tym w nocy')}</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" id="w-on" value="${i.ovtNight}" data-in="w"></label>
       </div></div>
 
-    <div class="card wstep"><div class="wstep-h"><i>5</i><b>Налоги и доплаты</b></div>
-      <div class="field"><span>Koszty uzyskania przychodu</span><div class="chips"><button class="chip${p.kup === 'local' ? ' on' : ''}" data-act="kup" data-v="local">250 zł, живу в Щецине</button><button class="chip${p.kup === 'commute' ? ' on' : ''}" data-act="kup" data-v="commute">300 zł, езжу из другого города</button></div></div>
-      <div class="field" style="margin-top:10px"><span>Ночная доплата 20%</span><div class="chips"><button class="chip${p.nightBasis === 'min' ? ' on' : ''}" data-act="nb" data-v="min">от минималки, ${money(C.salary({ month: v.W, rate: 0 }).minHourly)} zł/ч</button><button class="chip${p.nightBasis === 'own' ? ' on' : ''}" data-act="nb" data-v="own">от моей ставки</button></div></div>
-      <label class="switch" style="margin-top:8px"><span><b>PIT-2 подан</b><small>минус 300 zł налога каждый месяц</small></span><span class="tg"><input type="checkbox" data-act="pit2" ${p.pit2 ? 'checked' : ''}><i></i></span></label>
-      <label class="switch"><span><b>Участвую в PPK</b><small>2% с меня, 1,5% от работодателя</small></span><span class="tg"><input type="checkbox" data-act="ppk" ${p.ppk ? 'checked' : ''}><i></i></span></label>
+    <div class="card wstep"><div class="wstep-h"><i>5</i><b>${T('Налоги и доплаты', 'Podatki i dodatki')}</b></div>
+      <div class="field"><span>Koszty uzyskania przychodu</span><div class="chips"><button class="chip${p.kup === 'local' ? ' on' : ''}" data-act="kup" data-v="local">${T('250 zł, живу в Щецине', '250 zł, mieszkam w Szczecinie')}</button><button class="chip${p.kup === 'commute' ? ' on' : ''}" data-act="kup" data-v="commute">${T('300 zł, езжу из другого города', '300 zł, dojeżdżam z innego miasta')}</button></div></div>
+      <div class="field" style="margin-top:10px"><span>${T('Ночная доплата 20%', 'Dodatek nocny 20%')}</span><div class="chips"><button class="chip${p.nightBasis === 'min' ? ' on' : ''}" data-act="nb" data-v="min">${T('от минималки', 'od minimalnej')}, ${money(C.salary({ month: v.W, rate: 0 }).minHourly)} ${T('zł/ч', 'zł/h')}</button><button class="chip${p.nightBasis === 'own' ? ' on' : ''}" data-act="nb" data-v="own">${T('от моей ставки', 'od mojej stawki')}</button></div></div>
+      <label class="switch" style="margin-top:8px"><span><b>${T('PIT-2 подан', 'PIT-2 złożony')}</b><small>${T('минус 300 zł налога каждый месяц', 'minus 300 zł podatku co miesiąc')}</small></span><span class="tg"><input type="checkbox" data-act="pit2" ${p.pit2 ? 'checked' : ''}><i></i></span></label>
+      <label class="switch"><span><b>${T('Участвую в PPK', 'Uczestniczę w PPK')}</b><small>${T('2% с меня, 1,5% от работодателя', '2% ode mnie, 1,5% od pracodawcy')}</small></span><span class="tg"><input type="checkbox" data-act="ppk" ${p.ppk ? 'checked' : ''}><i></i></span></label>
       ${DB.team === 'dark' ? `<label class="field" style="margin-top:6px"><span>Dodatek DARK, zł</span><input class="in" type="number" inputmode="decimal" step="1" min="0" id="w-dark" value="${p.dark}" data-in="w"></label>
-      <p class="hint" style="margin-top:6px">300 zł, если отработаны все смены по графику; отпуск не мешает. При пропусках доплату могут уменьшить.</p>` : ''}
+      <p class="hint" style="margin-top:6px">${T('300 zł, если отработаны все смены по графику; отпуск не мешает. При пропусках доплату могут уменьшить.', '300 zł, jeśli przepracowane są wszystkie zmiany z grafiku; urlop nie przeszkadza. Przy nieobecnościach dodatek mogą zmniejszyć.')}</p>` : ''}
       <div class="grid2" style="margin-top:10px">
-        <label class="field"><span>Эквивалент за одежду и стирку</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-ekw" value="${p.ekw}" data-in="w"></label>
-        <label class="field"><span>Удержания (benefit и т.п.)</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-ded" value="${p.deduct || ''}" placeholder="0" data-in="w"></label>
+        <label class="field"><span>${T('Эквивалент за одежду и стирку', 'Ekwiwalent za odzież i pranie')}</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-ekw" value="${p.ekw}" data-in="w"></label>
+        <label class="field"><span>${T('Удержания (benefit и т.п.)', 'Potrącenia (benefit itp.)')}</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-ded" value="${p.deduct || ''}" placeholder="0" data-in="w"></label>
       </div>
-      <p class="hint" style="margin-top:6px">Эквивалент (12,00 + 10,95 zł) идёт без налога прямо в «на руки». Удержания — например, карта Multisport, если она есть в pasku.</p>
-      <label class="field" style="margin-top:10px"><span>Другие доплаты брутто, zł</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-extra" value="${p.extra || ''}" placeholder="0" data-in="w"></label>
+      <p class="hint" style="margin-top:6px">${T('Эквивалент (12,00 + 10,95 zł) идёт без налога прямо в «на руки». Удержания — например, карта Multisport, если она есть в pasku.', 'Ekwiwalent (12,00 + 10,95 zł) idzie bez podatku prosto do kwoty «na rękę». Potrącenia — np. karta Multisport, jeśli jest w pasku.')}</p>
+      <label class="field" style="margin-top:10px"><span>${T('Другие доплаты брутто, zł', 'Inne dodatki brutto, zł')}</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-extra" value="${p.extra || ''}" placeholder="0" data-in="w"></label>
     </div>
-    <div class="save-row"><button class="btn btn-acc" data-act="w-save">${v.saved ? 'Обновить расчёт' : 'Сохранить расчёт'}</button><button class="btn btn-ghost" data-act="w-reset" aria-label="Сбросить к графику">Сбросить</button></div>`;
+    <div class="save-row"><button class="btn btn-acc" data-act="w-save">${v.saved ? T('Обновить расчёт', 'Zaktualizuj wyliczenie') : T('Сохранить расчёт', 'Zapisz wyliczenie')}</button><button class="btn btn-ghost" data-act="w-reset" aria-label="${T('Сбросить к графику', 'Przywróć z grafiku')}">${T('Сбросить', 'Resetuj')}</button></div>`;
 }
 
 // Пропуски и множитель премии за обецность.
@@ -1020,9 +1083,9 @@ function absBlock(v) {
   const auto = autoHours(v.W).absences, n = v.inp.absences ?? auto, f = C.premiumFactor(n);
   const chip = (k, t) => `<button class="chip${Math.min(n, 2) === k ? ' on' : ''}" data-act="w-abs" data-v="${k}">${t}</button>`;
   return `<div class="urlop-box">
-    <div class="field"><span>Пропуски в ${MONTHS_GEN[+v.W.slice(5) - 1].replace(/я$/, 'е').replace(/а$/, 'е')}</span>
+    <div class="field"><span>${T('Пропуски в', 'Nieobecności w')} ${MONTHS_IN[+v.W.slice(5) - 1]}</span>
       <div class="chips">${chip(0, '0 · ×1,25')}${chip(1, '1 · ×0,80')}${chip(2, '2+ · 0')}</div></div>
-    <p>Без пропусков премия ×1,25, с одним пропуском ×0,80, с двумя и больше премии нет. ${auto ? `В календаре отмечено ${auto}.` : 'Отмечай пропуски в календаре — посчитается само.'}${n !== auto ? ` <button class="link" data-act="w-abs-auto">Взять из календаря (${auto})</button>` : ''} Сейчас премия ×${fx(f)}.</p>
+    <p>${T('Без пропусков премия ×1,25, с одним пропуском ×0,80, с двумя и больше премии нет.', 'Bez nieobecności premia ×1,25, z jedną ×0,80, z dwiema i więcej premii brak.')} ${auto ? T(`В календаре отмечено ${auto}.`, `W kalendarzu zaznaczono ${auto}.`) : T('Отмечай пропуски в календаре — посчитается само.', 'Zaznaczaj nieobecności w kalendarzu — policzy się samo.')}${n !== auto ? ` <button class="link" data-act="w-abs-auto">${T('Взять из календаря', 'Weź z kalendarza')} (${auto})</button>` : ''} ${T('Сейчас премия', 'Teraz premia')} ×${fx(f)}.</p>
   </div>`;
 }
 
@@ -1031,38 +1094,40 @@ function urlopBlock(W, i) {
   const ua = urlopAuto(W), uv = i.urlopVar ?? ua.perHour;
   const span = ua.months ? (ua.from === ua.to ? MONTHS[+ua.from.slice(5) - 1] : `${MONTHS[+ua.from.slice(5) - 1]}–${MONTHS[+ua.to.slice(5) - 1]}`) : '';
   const note = ua.months
-    ? `Среднее за ${span} (3 месяца по дате выплаты): премия, сверхурочные, ночные${DB.team === 'dark' ? ' и Dodatek DARK' : ''} делятся на отработанные часы — ${money(ua.perHour)} zł/ч${ua.est ? ', оценка по графику и архиву' : ''}.`
-    : 'Нет данных за прошлые месяцы. Впиши среднюю доплату из pasku или оставь 0.';
+    ? T(`Среднее за ${span} (3 месяца по дате выплаты): премия, сверхурочные, ночные${DB.team === 'dark' ? ' и Dodatek DARK' : ''} делятся на отработанные часы — ${money(ua.perHour)} zł/ч${ua.est ? ', оценка по графику и архиву' : ''}.`,
+        `Średnia za ${span} (3 miesiące według daty wypłaty): premia, nadgodziny, nocne${DB.team === 'dark' ? ' i Dodatek DARK' : ''} dzielone przez przepracowane godziny — ${money(ua.perHour)} zł/h${ua.est ? ', szacunek z grafiku i archiwum' : ''}.`)
+    : T('Нет данных за прошлые месяцы. Впиши среднюю доплату из pasku или оставь 0.', 'Brak danych z poprzednich miesięcy. Wpisz średni dodatek z paska albo zostaw 0.');
   const differs = ua.months && Math.abs(uv - ua.perHour) > 0.004;
   return `<div class="urlop-box">
-    <label class="field"><span>Доплата к часу отпуска, zł/ч</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="200" id="w-uvar" value="${uv}" data-in="w"></label>
-    <p>${note} Час отпуска = ставка + доплата.${differs ? ` <button class="link" data-act="w-uvar-auto">Вернуть ${money(ua.perHour)}</button>` : ''}</p>
+    <label class="field"><span>${T('Доплата к часу отпуска, zł/ч', 'Dodatek do godziny urlopu, zł/h')}</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="200" id="w-uvar" value="${uv}" data-in="w"></label>
+    <p>${note} ${T('Час отпуска = ставка + доплата.', 'Godzina urlopu = stawka + dodatek.')}${differs ? ` <button class="link" data-act="w-uvar-auto">${T('Вернуть', 'Przywróć')} ${money(ua.perHour)}</button>` : ''}</p>
   </div>`;
 }
 
 // Лимит ulga dla młodych: сколько дохода с начала года уже набрано.
 function ytdBlock(v) {
   const ytd = v.inp.ytd ?? ytdAuto(v.W), left = Math.max(0, C.TAX.YOUNG_LIMIT - ytd);
-  return `<label class="field" style="margin-top:12px"><span>Брутто с января до ${MONTHS_GEN[+v.W.slice(5) - 1]}, zł</span>
+  return `<label class="field" style="margin-top:12px"><span>${T('Брутто с января до', 'Brutto od stycznia do')} ${MONTHS_GEN[+v.W.slice(5) - 1]}, zł</span>
     <input class="in" type="number" inputmode="decimal" step="0.01" min="0" id="w-ytd" value="${ytd}" data-in="w"></label>
-    <p class="hint" style="margin-top:6px">${left > 0 ? `Без PIT осталось ${money(left)} zł из ${int(C.TAX.YOUNG_LIMIT)}.` : 'Лимит ulga исчерпан — PIT удерживается.'} Сумма берётся из прошлых выплат кошелька, впиши точную из последнего pasku.</p>`;
+    <p class="hint" style="margin-top:6px">${left > 0 ? T(`Без PIT осталось ${money(left)} zł из ${int(C.TAX.YOUNG_LIMIT)}.`, `Bez PIT zostało ${money(left)} zł z ${int(C.TAX.YOUNG_LIMIT)}.`) : T('Лимит ulga исчерпан — PIT удерживается.', 'Limit ulgi wyczerpany — PIT jest potrącany.')} ${T('Сумма берётся из прошлых выплат кошелька, впиши точную из последнего pasku.', 'Kwota pochodzi z poprzednich wypłat w portfelu, wpisz dokładną z ostatniego paska.')}</p>`;
 }
 
 function renderBreakdown(r) {
   const row = (k, v, cls = '', sub = '') => v || cls ? `<tr class="${cls}"><td>${k}${sub ? `<small>${sub}</small>` : ''}</td><td>${cls === 'minus' ? '−' : ''}${money(v)}</td></tr>` : '';
-  $('wallet-break').innerHTML = `<h2 class="sec">Из чего складывается</h2><div class="card"><table class="tbl">
-    ${row('Основные часы', r.parts.base, '', `${money(r.rate)} zł/ч`)}${row('Отпуск (urlop)', r.parts.urlop, '', r.urlopVar ? `${money(r.rate)} + ${money(r.urlopVar)} средних доплат = ${money(r.urlopRate)} zł/ч` : `${money(r.rate)} zł/ч`)}
-    ${row('Ночная доплата', r.parts.night, '', `${money(r.nightRate)} zł за ночной час`)}${row('Сверхурочные +50%', r.parts.ovt50)}${row('Сверхурочные +100%', r.parts.ovt100)}
-    ${r.parts.bonus ? row('Премия (zadaniowa)', r.parts.bonus, '', [r.bonusBase ? `пики ${money(r.bonusBase)} × ${fx(r.premiumFactor)} за обецность` : '', r.indirect ? `Indirect ${money(r.indirect)}` : ''].filter(Boolean).join(' + ')) : ''}${row('Dodatek DARK', r.parts.dark)}${row('Другие доплаты', r.parts.extra)}
-    <tr class="tot"><td>Брутто</td><td>${money(r.brutto)}</td></tr>
-    ${row('ZUS: пенсионный, рентовый, больничный', r.zus, 'minus', '13,71% от брутто')}
-    ${row('Składka zdrowotna', r.health, 'minus', '9% от брутто без ZUS')}
-    ${row('PIT', r.pit, 'minus', r.young && !r.pit ? 'ulga dla młodych' : `12% от ${int(r.pitBase)} zł${DB.profile.pit2 ? ' минус 300' : ''}${r.young ? ', сверх лимита ulga' : ''}`)}
+  const zh = T('zł/ч', 'zł/h');
+  $('wallet-break').innerHTML = `<h2 class="sec">${T('Из чего складывается', 'Z czego się składa')}</h2><div class="card"><table class="tbl">
+    ${row(T('Основные часы', 'Godziny podstawowe'), r.parts.base, '', `${money(r.rate)} ${zh}`)}${row(T('Отпуск (urlop)', 'Urlop'), r.parts.urlop, '', r.urlopVar ? `${money(r.rate)} + ${money(r.urlopVar)} ${T('средних доплат', 'średnich dodatków')} = ${money(r.urlopRate)} ${zh}` : `${money(r.rate)} ${zh}`)}
+    ${row(T('Ночная доплата', 'Dodatek nocny'), r.parts.night, '', `${money(r.nightRate)} ${T('zł за ночной час', 'zł za godzinę nocną')}`)}${row(T('Сверхурочные +50%', 'Nadgodziny +50%'), r.parts.ovt50)}${row(T('Сверхурочные +100%', 'Nadgodziny +100%'), r.parts.ovt100)}
+    ${r.parts.bonus ? row(T('Премия (zadaniowa)', 'Premia zadaniowa'), r.parts.bonus, '', [r.bonusBase ? `${T('пики', 'piki')} ${money(r.bonusBase)} × ${fx(r.premiumFactor)} ${T('за обецность', 'za obecność')}` : '', r.indirect ? `Indirect ${money(r.indirect)}` : ''].filter(Boolean).join(' + ')) : ''}${row('Dodatek DARK', r.parts.dark)}${row(T('Другие доплаты', 'Inne dodatki'), r.parts.extra)}
+    <tr class="tot"><td>${T('Брутто', 'Brutto')}</td><td>${money(r.brutto)}</td></tr>
+    ${row(T('ZUS: пенсионный, рентовый, больничный', 'ZUS: emerytalne, rentowe, chorobowe'), r.zus, 'minus', T('13,71% от брутто', '13,71% od brutto'))}
+    ${row('Składka zdrowotna', r.health, 'minus', T('9% от брутто без ZUS', '9% od brutto bez ZUS'))}
+    ${row('PIT', r.pit, 'minus', r.young && !r.pit ? 'ulga dla młodych' : `12% ${T('от', 'od')} ${int(r.pitBase)} zł${DB.profile.pit2 ? T(' минус 300', ' minus 300') : ''}${r.young ? T(', сверх лимита ulga', ', ponad limit ulgi') : ''}`)}
     ${r.ppkEmp ? row('PPK', r.ppkEmp, 'minus', '2%') : ''}
-    ${r.ekw ? `<tr><td>Эквивалент: одежда и стирка<small>без налога</small></td><td>+${money(r.ekw)}</td></tr>` : ''}
-    ${r.deduct ? row('Удержания', r.deduct, 'minus', 'benefit и т.п.') : ''}
-    <tr class="tot net"><td>На руки</td><td>${money(r.netto)}</td></tr></table></div>
-    <p class="hint">Ориентир по ставкам 2026 года. Точная сумма — в pasku płacowym.</p>`;
+    ${r.ekw ? `<tr><td>${T('Эквивалент: одежда и стирка', 'Ekwiwalent: odzież i pranie')}<small>${T('без налога', 'bez podatku')}</small></td><td>+${money(r.ekw)}</td></tr>` : ''}
+    ${r.deduct ? row(T('Удержания', 'Potrącenia'), r.deduct, 'minus', T('benefit и т.п.', 'benefit itp.')) : ''}
+    <tr class="tot net"><td>${T('На руки', 'Na rękę')}</td><td>${money(r.netto)}</td></tr></table></div>
+    <p class="hint">${T('Ориентир по ставкам 2026 года. Точная сумма — в pasku płacowym.', 'Orientacyjnie według stawek na 2026 rok. Dokładna kwota — w pasku płacowym.')}</p>`;
 }
 
 function readWalletInputs() {
@@ -1119,25 +1184,25 @@ function renderIndirect() {
   const el = $('ind-bar'); if (!el) return;
   const mk = indMonthDefault(), mine = indirectFor(mk), com = indCommunity(mk);
   el.innerHTML = `<span class="ind-ic" aria-hidden="true">${mine ? 'ID' : '＋'}</span>
-    <span class="ind-b"><b>Indirect${mine ? ` · ${MONTHS[+mk.slice(5) - 1]}` : ''}</b><small>${mine ? `${money(mine.amount)} zł · ${h1(mine.hours)} ч · ${money(indRate(mine))}/ч` : 'добавь премию и часы на Indirect'}</small></span>
-    <span class="ind-r">${com ? `${money(com.rate)}<small>zł/ч, склад · ${com.n}</small>` : '<small>ставка склада<br>появится скоро</small>'}</span>`;
+    <span class="ind-b"><b>Indirect${mine ? ` · ${MONTHS[+mk.slice(5) - 1]}` : ''}</b><small>${mine ? `${money(mine.amount)} zł · ${h1(mine.hours)} ${T('ч', 'h')} · ${money(indRate(mine))}/${T('ч', 'h')}` : T('добавь премию и часы на Indirect', 'dodaj premię i godziny na Indirect')}</small></span>
+    <span class="ind-r">${com ? `${money(com.rate)}<small>${T('zł/ч, склад', 'zł/h, magazyn')} · ${com.n}</small>` : `<small>${T('ставка склада<br>появится скоро', 'stawka magazynu<br>pojawi się wkrótce')}</small>`}</span>`;
   loadIndStats();
 }
 
 function indSheet(mk) {
   STATE.indMonth = mk;
   const cur = indirectFor(mk), com = indCommunity(mk), opts = [C.addMonths(C.monthKey(new Date()), -1), C.monthKey(new Date())];
-  sheet(`<h3>Премия Indirect</h3>
-    <p>Для работы на процессах поддержки: Doki, Migracja, Odpady, Operator wózka, Problem Solver и др. Впиши сумму премии из pasku и сколько часов был на Indirect — трекер посчитает ставку за час и добавит премию в кошелёк.</p>
+  sheet(`<h3>${T('Премия Indirect', 'Premia Indirect')}</h3>
+    <p>${T('Для работы на процессах поддержки: Doki, Migracja, Odpady, Operator wózka, Problem Solver и др. Впиши сумму премии из pasku и сколько часов был на Indirect — трекер посчитает ставку за час и добавит премию в кошелёк.', 'Dla pracy na procesach wsparcia: Doki, Migracja, Odpady, Operator wózka, Problem Solver itd. Wpisz kwotę premii z paska i ile godzin byłeś na Indirect — tracker policzy stawkę za godzinę i doda premię do portfela.')}</p>
     <div class="chips" style="margin:4px 0 12px">${opts.map(m => `<button class="chip${m === mk ? ' on' : ''}" data-act="ind-month" data-v="${m}">${cap(MONTHS[+m.slice(5) - 1])}${indirectFor(m) ? ' ✓' : ''}</button>`).join('')}</div>
     <div class="grid2">
-      <label class="field"><span>Премия, zł брутто</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="20000" id="ind-a" value="${cur ? cur.amount : ''}" placeholder="850" data-in="ind"></label>
-      <label class="field"><span>Часов на Indirect</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" max="400" id="ind-h" value="${cur ? cur.hours : ''}" placeholder="96" data-in="ind"></label>
+      <label class="field"><span>${T('Премия, zł брутто', 'Premia, zł brutto')}</span><input class="in" type="number" inputmode="decimal" step="0.01" min="0" max="20000" id="ind-a" value="${cur ? cur.amount : ''}" placeholder="850" data-in="ind"></label>
+      <label class="field"><span>${T('Часов на Indirect', 'Godzin na Indirect')}</span><input class="in" type="number" inputmode="decimal" step="0.5" min="0" max="400" id="ind-h" value="${cur ? cur.hours : ''}" placeholder="96" data-in="ind"></label>
     </div>
     <div class="ind-prev" id="ind-prev"></div>
-    <p class="hint">Сумма и часы без имени попадут в общую статистику — так считается средняя ставка Indirect за час по складу${com ? `: сейчас ${money(com.rate)} zł/ч у ${com.n} ${plural(com.n, 'человека', 'человек', 'человек')} (${MONTHS[+com.month.slice(5) - 1]})` : ''}.</p>
-    <div class="stack"><button class="btn btn-acc btn-wide" data-act="ind-save">Сохранить</button>
-    ${cur ? '<button class="btn btn-ghost btn-wide" data-act="ind-del">Удалить за этот месяц</button>' : '<button class="btn btn-ghost btn-wide" data-act="sheet-close">Отмена</button>'}</div>`);
+    <p class="hint">${T('Сумма и часы без имени попадут в общую статистику — так считается средняя ставка Indirect за час по складу', 'Kwota i godziny bez imienia trafią do wspólnej statystyki — tak liczy się średnia stawka Indirect za godzinę na magazynie')}${com ? `: ${T('сейчас', 'teraz')} ${money(com.rate)} ${T('zł/ч у', 'zł/h u')} ${com.n} ${P(com.n, 'человека|человек|человек', 'osoby|osób|osób')} (${MONTHS[+com.month.slice(5) - 1]})` : ''}.</p>
+    <div class="stack"><button class="btn btn-acc btn-wide" data-act="ind-save">${T('Сохранить', 'Zapisz')}</button>
+    ${cur ? `<button class="btn btn-ghost btn-wide" data-act="ind-del">${T('Удалить за этот месяц', 'Usuń za ten miesiąc')}</button>` : `<button class="btn btn-ghost btn-wide" data-act="sheet-close">${T('Отмена', 'Anuluj')}</button>`}</div>`);
   indPreview();
 }
 function indPreview() {
@@ -1146,20 +1211,20 @@ function indPreview() {
   const com = indCommunity(STATE.indMonth);
   if (!(a > 0 && h > 0)) { box.innerHTML = ''; return; }
   const r = C.r2(a / h), d = com ? C.r2(r - com.rate) : 0;
-  box.innerHTML = `<div><span>Твоя ставка</span><b>${money(r)} zł/ч</b></div>${com ? `<div><span>Склад в среднем</span><b>${money(com.rate)} zł/ч</b></div><div><span>Разница</span><b class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '+' : '−'}${money(Math.abs(d))}</b></div>` : ''}`;
+  box.innerHTML = `<div><span>${T('Твоя ставка', 'Twoja stawka')}</span><b>${money(r)} ${T('zł/ч', 'zł/h')}</b></div>${com ? `<div><span>${T('Склад в среднем', 'Średnia magazynu')}</span><b>${money(com.rate)} ${T('zł/ч', 'zł/h')}</b></div><div><span>${T('Разница', 'Różnica')}</span><b class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '+' : '−'}${money(Math.abs(d))}</b></div>` : ''}`;
 }
 function indSave(del) {
   const mk = STATE.indMonth, num = id => Number(String($(id)?.value || '').replace(',', '.')) || 0;
   const amount = del ? 0 : Math.min(20000, Math.max(0, num('ind-a'))), hours = del ? 0 : Math.min(400, Math.max(0, num('ind-h')));
-  if (!del && !(amount > 0 && hours > 0)) { haptic.err(); toast('Впиши сумму и часы'); return; }
-  if (!del && amount / hours > 80) { haptic.err(); toast('Больше 80 zł за час — проверь сумму и часы'); return; }
+  if (!del && !(amount > 0 && hours > 0)) { haptic.err(); toast(T('Впиши сумму и часы', 'Wpisz kwotę i godziny')); return; }
+  if (!del && amount / hours > 80) { haptic.err(); toast(T('Больше 80 zł за час — проверь сумму и часы', 'Ponad 80 zł za godzinę — sprawdź kwotę i godziny')); return; }
   DB.indirect = DB.indirect.filter(x => x.month !== mk);
   if (!del) DB.indirect.push({ month: mk, amount: C.r2(amount), hours: Math.round(hours * 10) / 10, at: new Date().toISOString() });
   DB.indirect.sort((a, b) => (a.month < b.month ? -1 : 1)); DB.indirect = DB.indirect.slice(-24);
   save(); haptic.ok(); closeSheet();
   if (STATE.verified) api('indirect', { month: mk, amount: del ? 0 : amount, hours: del ? 0 : hours }).then(() => loadIndStats(true)).catch(() => {});
   pushRank(); renderHome();
-  toast(del ? 'Indirect за месяц удалён' : `Indirect: ${money(amount)} zł, ${money(C.r2(amount / hours))} zł/ч — добавлено в кошелёк`);
+  toast(del ? T('Indirect за месяц удалён', 'Indirect za miesiąc usunięty') : `Indirect: ${money(amount)} zł, ${money(C.r2(amount / hours))} ${T('zł/ч — добавлено в кошелёк', 'zł/h — dodano do portfela')}`);
   renderIndirect();
 }
 
@@ -1167,11 +1232,12 @@ function indSave(del) {
 // Odcinek płacowy разбирается на телефоне (slip.js), проверка — в core.js.
 // Наружу уходит только дата, когда пришли деньги: из дат всех людей
 // складывается прогноз следующей зарплаты.
-const LV = {
-  ok:   { ic: '✓', title: 'Odcinek верный' },
-  warn: { ic: '!', title: 'Налоги верные, есть вопросы' },
-  bad:  { ic: '✕', title: 'В odcinku ошибка' },
-};
+const LVS = () => ({
+  ok:   { ic: '✓', title: T('Odcinek верный', 'Odcinek poprawny') },
+  warn: { ic: '!', title: T('Налоги верные, есть вопросы', 'Podatki się zgadzają, są pytania') },
+  bad:  { ic: '✕', title: T('В odcinku ошибка', 'W odcinku jest błąd') },
+});
+const LV = new Proxy({}, { get: (_, k) => LVS()[k] });
 const ITEM_IC = { ok: '✓', info: 'i', warn: '!', bad: '✕' };
 const slipsOf = mk => DB.slips.filter(s => s.month === mk).sort((a, b) => (a.kind === 'main' ? 0 : 1) - (b.kind === 'main' ? 0 : 1) || (a.list < b.list ? -1 : 1));
 const dayLong = day => { const [, m, d] = day.split('-').map(Number); return `${d} ${MONTHS_GEN[m - 1]}`; };
@@ -1196,7 +1262,7 @@ const slipIc = mk => (LV[slipLevel(mk)] || LV.ok).ic;
 function slipShort(mk) {
   const r = slipResultOf(mk); if (!r) return '';
   const bad = r.items.find(i => i.level === 'bad');
-  return `<small class="oc-note ${r.level}">${bad ? esc(`${bad.title}: ${bad.text.split('. ')[0]}`) : r.level === 'ok' ? 'по odcinku всё сходится' : 'есть вопросы — открой проверку'}</small>`;
+  return `<small class="oc-note ${r.level}">${bad ? esc(`${bad.title}: ${bad.text.split('. ')[0]}`) : r.level === 'ok' ? T('по odcinku всё сходится', 'w odcinku wszystko się zgadza') : T('есть вопросы — открой проверку', 'są pytania — otwórz sprawdzenie')}</small>`;
 }
 
 // Сумма odcinków месяца → «Прошлые выплаты». Прежний расчёт трекера — в calc.
@@ -1255,14 +1321,14 @@ function nextPay(now = new Date()) {
 const likely = p => (p.days.find(x => x.p >= .5) || p.days[p.days.length - 1] || { day: p.deadline, p: 1 });
 function payText(p) {
   const l = likely(p);
-  return l.day === p.deadline ? `до ${dayLong(p.deadline)}` : `≈ ${dayLong(l.day)} (${Math.round(l.p * 100)}%), точно до ${dayLong(p.deadline)}`;
+  return l.day === p.deadline ? `${T('до', 'do')} ${dayLong(p.deadline)}` : `≈ ${dayLong(l.day)} (${Math.round(l.p * 100)}%), ${T('точно до', 'na pewno do')} ${dayLong(p.deadline)}`;
 }
 
 function renderPlateCheck() {
   const el = $('plate-check-sub'); if (!el) return;
   const last = [...new Set(DB.slips.map(s => s.month))].sort().pop(), np = nextPay(), l = likely(np.next);
   const lv = last ? slipLevel(last) : null;
-  el.textContent = `${lv ? `${MONTHS[+last.slice(5) - 1]}: ${lv === 'ok' ? 'верно ✓' : lv === 'bad' ? 'ошибка ✕' : 'есть вопросы'} · ` : ''}зарплата ${l.day === np.next.deadline ? 'до' : '≈'} ${dayLong(l.day)}`;
+  el.textContent = `${lv ? `${MONTHS[+last.slice(5) - 1]}: ${lv === 'ok' ? T('верно ✓', 'poprawny ✓') : lv === 'bad' ? T('ошибка ✕', 'błąd ✕') : T('есть вопросы', 'są pytania')} · ` : ''}${T('зарплата', 'wypłata')} ${l.day === np.next.deadline ? T('до', 'do') : '≈'} ${dayLong(l.day)}`;
   loadPaydays();
 }
 
@@ -1274,66 +1340,66 @@ function renderOdcinek() {
   const ppl = Object.values(payReports()[nW] || {}).reduce((a, b) => a + b, 0);
   $('odcinek').innerHTML = `
     <div class="card oc-up">
-      <p>Загрузи odcinek płacowy — PDF из письма или портала. Трекер прочитает его прямо на телефоне, файл никуда не уходит. Проверим налоги, премию, часы, ночные и отпускные.</p>
+      <p>${T('Загрузи odcinek płacowy — PDF из письма или портала. Трекер прочитает его прямо на телефоне, файл никуда не уходит. Проверим налоги, премию, часы, ночные и отпускные.', 'Wgraj odcinek płacowy — PDF z maila lub portalu. Tracker odczyta go w telefonie, plik nigdzie nie wychodzi. Sprawdzimy podatki, premię, godziny, nocne i urlop.')}</p>
       ${STATE.slipErr ? `<div class="oc-err">${esc(STATE.slipErr)}</div>` : ''}
-      <button class="btn btn-acc btn-wide" data-act="slip-pick" id="slip-pick">Загрузить odcinek, PDF</button>
+      <button class="btn btn-acc btn-wide" data-act="slip-pick" id="slip-pick">${T('Загрузить odcinek, PDF', 'Wgraj odcinek, PDF')}</button>
     </div>
     <div class="card pay-card">
       <div class="pay-ic" aria-hidden="true">zł</div>
       <div class="pay-b">
-        ${np.last ? `<small class="pay-last">За ${MONTHS[+np.last.month.slice(5) - 1]} пришла ${dayLong(np.last.actual)}${np.last.own ? '' : `, отметили ${np.last.actualN}`}</small>` : ''}
-        <b>Зарплата за ${MONTHS[+nW.slice(5) - 1]}</b>
-        <span>${np.next.actual ? `пришла ${dayLong(np.next.actual)}${np.next.own ? ', твоя отметка' : `, отметили ${np.next.actualN}`}` : esc(payText(np.next))}</span>
+        ${np.last ? `<small class="pay-last">${T('За', 'Za')} ${MONTHS[+np.last.month.slice(5) - 1]} ${T('пришла', 'przyszła')} ${dayLong(np.last.actual)}${np.last.own ? '' : `, ${T('отметили', 'zgłosiło')} ${np.last.actualN}`}</small>` : ''}
+        <b>${T('Зарплата за', 'Wypłata za')} ${MONTHS[+nW.slice(5) - 1]}</b>
+        <span>${np.next.actual ? `${T('пришла', 'przyszła')} ${dayLong(np.next.actual)}${np.next.own ? T(', твоя отметка', ', twoje zgłoszenie') : `, ${T('отметили', 'zgłosiło')} ${np.next.actualN}`}` : esc(payText(np.next))}</span>
         ${np.next.actual ? '' : `<div class="pay-bar">${np.next.days.map((x, i, a) => `<i style="flex:${Math.max(.2, x.p - (i ? a[i - 1].p : 0))}"><b>${+x.day.slice(8)}</b><small>${Math.round(x.p * 100)}%</small></i>`).join('')}</div>`}
       </div>
     </div>
-    <p class="hint">Зарплата — до 10-го. Если 10-е выпадает на выходной или праздник, деньги приходят в последний рабочий день перед ним, а часто на день раньше срока. ${np.next.src === 'data' ? `Прогноз уточнён по датам людей за ${np.next.months} ${plural(np.next.months, 'месяц', 'месяца', 'месяцев')}.` : 'Отмечай, когда пришли деньги, — прогноз станет точнее для всех.'}${ppl && !np.next.actual ? ` Уже отметили: ${ppl}.` : ''}</p>
+    <p class="hint">${T('Зарплата — до 10-го. Если 10-е выпадает на выходной или праздник, деньги приходят в последний рабочий день перед ним, а часто на день раньше срока.', 'Wypłata — do 10. Jeśli 10. wypada w weekend lub święto, pieniądze przychodzą w ostatni dzień roboczy przed nim, a często dzień przed terminem.')} ${np.next.src === 'data' ? `${T('Прогноз уточнён по датам людей за', 'Prognoza poprawiona według dat od ludzi z')} ${np.next.months} ${P(np.next.months, 'месяц|месяца|месяцев', 'miesiąca|miesięcy|miesięcy')}.` : T('Отмечай, когда пришли деньги, — прогноз станет точнее для всех.', 'Zaznaczaj, kiedy przyszły pieniądze — prognoza będzie dokładniejsza dla wszystkich.')}${ppl && !np.next.actual ? ` ${T('Уже отметили', 'Już zgłosiło')}: ${ppl}.` : ''}</p>
     ${view ? slipCard(view) : ''}
-    ${months.length > 1 ? `<h2 class="sec">Проверенные месяцы</h2><div class="list">${months.map(m => slipRow(m, m === view)).join('')}</div>` : ''}`;
+    ${months.length > 1 ? `<h2 class="sec">${T('Проверенные месяцы', 'Sprawdzone miesiące')}</h2><div class="list">${months.map(m => slipRow(m, m === view)).join('')}</div>` : ''}`;
 }
 
 function slipRow(mk, on) {
   const ss = slipsOf(mk), r = slipResultOf(mk), lv = LV[r.level];
   return `<button class="strow${on ? ' me-row' : ''}" data-act="slip-view" data-m="${mk}"><span class="st-tag oc-tag ${r.level}">${lv.ic}</span>
-    <span class="strow-b"><b>${mLabel(mk)}</b><small>${ss.length > 1 ? `${ss.length} листа, ` : ''}выплата ${ss[0].payDate ? fmtD(ss[0].payDate) : '—'}</small></span>
-    <span class="strow-r">${money(r.netto)}<small>zł на руки</small></span></button>`;
+    <span class="strow-b"><b>${mLabel(mk)}</b><small>${ss.length > 1 ? `${ss.length} ${T('листа', 'listy')}, ` : ''}${T('выплата', 'wypłata')} ${ss[0].payDate ? fmtD(ss[0].payDate) : '—'}</small></span>
+    <span class="strow-r">${money(r.netto)}<small>${T('zł на руки', 'zł na rękę')}</small></span></button>`;
 }
 
 function slipCard(mk) {
   const ss = slipsOf(mk), r = slipResultOf(mk), lv = LV[r.level], today = C.iso(new Date());
   return `<div class="card oc-res ${r.level}" id="oc-res">
     <div class="oc-v"><span class="oc-ic">${lv.ic}</span><div><b>${lv.title}</b><small>${mLabel(mk)}: ${ss.map(s => esc(s.kind === 'kor' ? `korekta ${s.list}` : `lista ${s.list || 'główna'}`)).join(' + ')}</small></div></div>
-    <div class="oc-sum"><div><span>На руки</span><b>${money(r.netto)}</b></div><div><span>Брутто</span><b>${money(r.brutto)}</b></div><div><span>Премия</span><b>${money(r.bonus)}</b></div></div>
+    <div class="oc-sum"><div><span>${T('На руки', 'Na rękę')}</span><b>${money(r.netto)}</b></div><div><span>${T('Брутто', 'Brutto')}</span><b>${money(r.brutto)}</b></div><div><span>${T('Премия', 'Premia')}</span><b>${money(r.bonus)}</b></div></div>
     <ul class="oc-list">${r.items.map(i => `<li class="${i.level}"><i aria-hidden="true">${ITEM_IC[i.level]}</i><div><b>${esc(i.title)}</b><small>${esc(i.text)}</small></div></li>`).join('')}</ul>
     ${ss.map(s => `<div class="oc-got">
-      <label class="field"><span>${s.kind === 'kor' ? 'Korekta пришла' : 'Деньги пришли'} на счёт</span><input class="in" type="date" value="${s.gotOn}" max="${today}" data-in="slip-got" data-id="${esc(s.id)}"></label>
-      <button class="chip" data-act="slip-today" data-id="${esc(s.id)}">Сегодня</button></div>
-      <small class="oc-hint">В odcinku дата выплаты ${s.payDate ? fmtD(s.payDate) : '—'}. Дата прихода без сумм и имени попадёт в общий прогноз зарплаты.</small>`).join('')}
+      <label class="field"><span>${s.kind === 'kor' ? T('Korekta пришла на счёт', 'Korekta wpłynęła na konto') : T('Деньги пришли на счёт', 'Pieniądze wpłynęły na konto')}</span><input class="in" type="date" value="${s.gotOn}" max="${today}" data-in="slip-got" data-id="${esc(s.id)}"></label>
+      <button class="chip" data-act="slip-today" data-id="${esc(s.id)}">${T('Сегодня', 'Dziś')}</button></div>
+      <small class="oc-hint">${T('В odcinku дата выплаты', 'W odcinku data wypłaty')} ${s.payDate ? fmtD(s.payDate) : '—'}. ${T('Дата прихода без сумм и имени попадёт в общий прогноз зарплаты.', 'Data wpływu bez kwot i imienia trafi do wspólnej prognozy wypłaty.')}</small>`).join('')}
     ${slipSuggest(mk, r.profile)}
-    <button class="btn btn-ghost btn-wide" style="margin-top:12px" data-act="slip-del" data-m="${mk}">Удалить odcinek за ${MONTHS[+mk.slice(5) - 1]}</button>
+    <button class="btn btn-ghost btn-wide" style="margin-top:12px" data-act="slip-del" data-m="${mk}">${T('Удалить odcinek за', 'Usuń odcinek za')} ${MONTHS[+mk.slice(5) - 1]}</button>
   </div>`;
 }
 
 // Что из odcinka стоит перенести в настройки кошелька.
 function slipChanges(pr) {
   const p = DB.profile, out = [];
-  if (pr.rate && Math.abs(pr.rate - currentRate()) > .004) out.push(['rate', `ставка ${money(pr.rate)} zł/ч`]);
-  if (pr.ekw !== undefined && Math.abs(pr.ekw - p.ekw) > .004) out.push(['ekw', `эквиваленты ${money(pr.ekw)} zł`]);
-  if (Math.abs((pr.deduct || 0) - p.deduct) > .004) out.push(['deduct', `удержания (benefit) ${money(pr.deduct || 0)} zł`]);
+  if (pr.rate && Math.abs(pr.rate - currentRate()) > .004) out.push(['rate', `${T('ставка', 'stawka')} ${money(pr.rate)} ${T('zł/ч', 'zł/h')}`]);
+  if (pr.ekw !== undefined && Math.abs(pr.ekw - p.ekw) > .004) out.push(['ekw', `${T('эквиваленты', 'ekwiwalenty')} ${money(pr.ekw)} zł`]);
+  if (Math.abs((pr.deduct || 0) - p.deduct) > .004) out.push(['deduct', `${T('удержания', 'potrącenia')} (benefit) ${money(pr.deduct || 0)} zł`]);
   if (pr.kup && pr.kup !== p.kup) out.push(['kup', `KUP ${pr.kup === 'commute' ? 300 : 250} zł`]);
-  if (pr.ppk !== p.ppk) out.push(['ppk', pr.ppk ? 'PPK включён' : 'PPK выключен']);
+  if (pr.ppk !== p.ppk) out.push(['ppk', pr.ppk ? T('PPK включён', 'PPK włączone') : T('PPK выключен', 'PPK wyłączone')]);
   return out;
 }
 function slipSuggest(mk, pr) {
   const ch = slipChanges(pr);
-  const young = pr.youngLikely && !DB.profile.birthOk ? '<p class="hint" style="margin-top:10px">PIT 0 zł — похоже, у тебя ulga dla młodych. Подтверди дату рождения в кошельке, чтобы расчёт совпадал.</p>' : '';
+  const young = pr.youngLikely && !DB.profile.birthOk ? `<p class="hint" style="margin-top:10px">${T('PIT 0 zł — похоже, у тебя ulga dla młodych. Подтверди дату рождения в кошельке, чтобы расчёт совпадал.', 'PIT 0 zł — wygląda na to, że masz ulgę dla młodych. Potwierdź datę urodzenia w portfelu, żeby wyliczenie się zgadzało.')}</p>` : '';
   if (!ch.length) return young;
-  return `${young}<div class="oc-apply"><b>В кошельке другие цифры</b><small>${ch.map(c => c[1]).join(', ')}</small>
-    <button class="btn btn-acc btn-wide" data-act="slip-apply" data-m="${mk}">Взять из odcinka</button></div>`;
+  return `${young}<div class="oc-apply"><b>${T('В кошельке другие цифры', 'W portfelu są inne liczby')}</b><small>${ch.map(c => c[1]).join(', ')}</small>
+    <button class="btn btn-acc btn-wide" data-act="slip-apply" data-m="${mk}">${T('Взять из odcinka', 'Weź z odcinka')}</button></div>`;
 }
 
 async function slipUpload(file) {
-  const btn = $('slip-pick'); if (btn) { btn.disabled = true; btn.textContent = 'Читаю odcinek…'; }
+  const btn = $('slip-pick'); if (btn) { btn.disabled = true; btn.textContent = T('Читаю odcinek…', 'Czytam odcinek…'); }
   STATE.slipErr = '';
   try {
     const parsed = await window.Slip.readFile(file);
@@ -1346,13 +1412,13 @@ async function slipUpload(file) {
     STATE.slipView = rec.month;
     renderOdcinek();
     const r = slipResultOf(rec.month);
-    toast(r.level === 'ok' ? `Odcinek за ${MONTHS[+rec.month.slice(5) - 1]}: всё верно` : r.level === 'bad' ? 'В odcinku есть ошибка' : 'Odcinek прочитан, есть вопросы');
+    toast(r.level === 'ok' ? `Odcinek ${T('за', 'za')} ${MONTHS[+rec.month.slice(5) - 1]}: ${T('всё верно', 'wszystko się zgadza')}` : r.level === 'bad' ? T('В odcinku есть ошибка', 'W odcinku jest błąd') : T('Odcinek прочитан, есть вопросы', 'Odcinek odczytany, są pytania'));
     $('oc-res')?.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'start' });
   } catch (e) {
     haptic.err();
-    STATE.slipErr = ({ 'no-inflate': 'Телефон не умеет распаковывать PDF. Обнови Telegram или систему.', 'not-pdf': 'Это не PDF. Нужен файл odcinka из письма или портала.',
-      'too-big': 'Файл больше 3 МБ — это точно odcinek?', 'not-odcinek': 'В файле нет odcinka AutoDoc: не нашёл брутто и сумму к выплате.',
-      'no-text': 'В PDF нет текста — похоже, это скан или фото. Нужен PDF из письма.' })[e && e.message] || 'Не получилось прочитать файл. Нужен PDF odcinka из письма.';
+    STATE.slipErr = ({ 'no-inflate': T('Телефон не умеет распаковывать PDF. Обнови Telegram или систему.', 'Telefon nie umie rozpakować PDF. Zaktualizuj Telegram lub system.'), 'not-pdf': T('Это не PDF. Нужен файл odcinka из письма или портала.', 'To nie jest PDF. Potrzebny plik odcinka z maila lub portalu.'),
+      'too-big': T('Файл больше 3 МБ — это точно odcinek?', 'Plik ma ponad 3 MB — to na pewno odcinek?'), 'not-odcinek': T('В файле нет odcinka AutoDoc: не нашёл брутто и сумму к выплате.', 'W pliku nie ma odcinka AutoDoc: brak brutto i kwoty do wypłaty.'),
+      'no-text': T('В PDF нет текста — похоже, это скан или фото. Нужен PDF из письма.', 'W PDF nie ma tekstu — to chyba skan lub zdjęcie. Potrzebny PDF z maila.') })[e && e.message] || T('Не получилось прочитать файл. Нужен PDF odcinka из письма.', 'Nie udało się odczytać pliku. Potrzebny PDF odcinka z maila.');
     renderOdcinek();
   } finally { const fi = $('slip-file'); if (fi) fi.value = ''; }
 }
@@ -1361,7 +1427,7 @@ function setSlipGot(id, day) {
   const s = DB.slips.find(x => x.id === id); if (!s) return;
   s.gotOn = RE_DAY.test(day) && day <= C.iso(new Date()) ? day : '';
   save(); reportPay(s); haptic.pick();
-  if (s.gotOn) toast(`Отмечено: пришла ${dayLong(s.gotOn)}`);
+  if (s.gotOn) toast(`${T('Отмечено: пришла', 'Zaznaczono: wpłynęła')} ${dayLong(s.gotOn)}`);
   renderOdcinek();
 }
 
@@ -1369,7 +1435,7 @@ function setSlipGot(id, day) {
 async function renderRating() {
   const m = STATE.rankMonth || C.monthKey(new Date());
   $('rank-month').textContent = mLabel(m);
-  const wrap = $('rank-list'); wrap.innerHTML = '<div class="empty">Загружаю…</div>';
+  const wrap = $('rank-list'); wrap.innerHTML = `<div class="empty">${T('Загружаю…', 'Wczytuję…')}</div>`;
   try {
     const q = cols => fetch(`${CFG.SB_URL}/rest/v1/leaderboard?month=eq.${m}&order=bonus.desc&limit=100&select=${cols}`,
       { headers: { apikey: CFG.SB_KEY, Authorization: 'Bearer ' + CFG.SB_KEY } });
@@ -1377,13 +1443,13 @@ async function renderRating() {
     if (r.status === 400 || r.status === 401) r = await q('pub,name,emoji,bonus,peaks,shifts,ppc');   // база ещё без колонок смены
     if (!r.ok) throw 0;
     const rows = await r.json();
-    if (!rows.length) { wrap.innerHTML = '<div class="empty"><b>Пока никого</b>Запиши смену — и окажешься в таблице.</div>'; return; }
+    if (!rows.length) { wrap.innerHTML = `<div class="empty"><b>${T('Пока никого', 'Na razie nikogo')}</b>${T('Запиши смену — и окажешься в таблице.', 'Zapisz zmianę — i trafisz do tabeli.')}</div>`; return; }
     const medal = ['🥇', '🥈', '🥉'];
     wrap.innerHTML = rows.map((x, i) => { const me = !!STATE.pub && x.pub === STATE.pub; return `
       <div class="strow${me ? ' me-row' : ''}"><span class="rk">${i < 3 ? medal[i] : i + 1}</span>
-        <span class="strow-b"><span class="rk-name"><b>${esc(x.emoji || '👷')} ${esc(x.name || 'Аноним')}${me ? ' (ты)' : ''}</b>${teamTag(x.team, x.grp)}</span><small>${int(x.peaks)} шт, ${int(x.shifts)} ${plural(+x.shifts || 0, 'смена', 'смены', 'смен')}, темп ${h1(x.ppc)}</small></span>
+        <span class="strow-b"><span class="rk-name"><b>${esc(x.emoji || '👷')} ${esc(x.name || T('Аноним', 'Anonim'))}${me ? T(' (ты)', ' (ty)') : ''}</b>${teamTag(x.team, x.grp)}</span><small>${int(x.peaks)} ${T('шт', 'szt.')}, ${int(x.shifts)} ${P(+x.shifts || 0, 'смена|смены|смен', 'zmiana|zmiany|zmian')}, ${T('темп', 'tempo')} ${h1(x.ppc)}</small></span>
         <span class="strow-r">${money(x.bonus)}<small>zł</small></span></div>`; }).join('');
-  } catch { wrap.innerHTML = '<div class="empty"><b>Нет связи с базой</b>Проверь интернет и открой раздел снова.</div>'; }
+  } catch { wrap.innerHTML = `<div class="empty"><b>${T('Нет связи с базой', 'Brak połączenia z bazą')}</b>${T('Проверь интернет и открой раздел снова.', 'Sprawdź internet i otwórz sekcję ponownie.')}</div>`; }
 }
 
 // Маленький бейдж смены в рейтинге: точка цвета смены + «DARK A». Не переносится,
@@ -1391,7 +1457,7 @@ async function renderRating() {
 function teamTag(team, grp) {
   if (!TEAM_COL[team]) return '';
   const label = teamMeta(team).label + (/^[A-F]$/.test(grp || '') ? ' ' + grp : '');
-  return `<span class="tm-tag" style="--tc:${TEAM_COL[team]}" title="Смена ${esc(label)}">${esc(label)}</span>`;
+  return `<span class="tm-tag" style="--tc:${TEAM_COL[team]}" title="${T('Смена', 'Zmiana')} ${esc(label)}">${esc(label)}</span>`;
 }
 
 // Итоги месяца: всё, что влияет на деньги, — смены, отпуск, пропуски,
@@ -1426,97 +1492,102 @@ function renderArchive() {
   const keys = new Set([now, ...Object.keys(DB.archive), ...Object.keys(DB.urlop), ...Object.keys(DB.absent),
     ...DB.ovt.map(o => o.date.slice(0, 7)), ...DB.wallet.hist.map(h => h.month)]);
   const ms = [...keys].filter(m => RE_MK.test(m) && m <= now).sort().reverse().slice(0, 12);
+  const hU = T('ч', 'h');
   const cell = (ic, label, val, note = '') => `<div class="ms-c"><span>${ic} ${label}</span><b>${val}</b>${note ? `<small>${note}</small>` : ''}</div>`;
   $('archive-list').innerHTML = ms.map(m => {
     const t = monthStats(m);
     return `<div class="card mcard">
-      <div class="mcard-h"><div><b>${mLabel(m)}</b>${t.cur ? '<span class="ms-live">идёт</span>' : ''}</div>
-        <div class="mcard-v">${money(t.pay.netto)}<small>zł на руки${t.pay.src === 'est' ? ', расчёт' : t.pay.src === 'slip' ? `, odcinek ${slipIc(m)}` : ''}</small><small>брутто ${money(t.pay.brutto)}</small></div></div>
+      <div class="mcard-h"><div><b>${mLabel(m)}</b>${t.cur ? `<span class="ms-live">${T('идёт', 'trwa')}</span>` : ''}</div>
+        <div class="mcard-v">${money(t.pay.netto)}<small>${T('zł на руки', 'zł na rękę')}${t.pay.src === 'est' ? T(', расчёт', ', wyliczenie') : t.pay.src === 'slip' ? `, odcinek ${slipIc(m)}` : ''}</small><small>${T('брутто', 'brutto')} ${money(t.pay.brutto)}</small></div></div>
       <div class="ms-grid">
-        ${cell('🗓', 'Смен', t.has ? `${t.worked}` : '—', t.has ? `по графику ${t.scheduled}, ${h1(t.hours)} ч` : 'графика нет')}
-        ${cell('🏖', 'Отпуск', t.urlopDays ? `${t.urlopDays} ${plural(t.urlopDays, 'день', 'дня', 'дней')}` : '—', t.urlopHours ? `${h1(t.urlopHours)} ч` : '')}
-        ${cell('⚠️', 'Пропуски', `${t.absences}`, `премия ×${fx(t.pf)}`)}
-        ${cell('⏱', 'Доп. часы', t.ovtHours ? `${h1(t.ovtHours)} ч` : '—', t.ovtHours ? [t.ovt50 ? `+50% ${h1(t.ovt50)} ч` : '', t.ovt100 ? `+100% ${h1(t.ovt100)} ч` : ''].filter(Boolean).join(', ') : '')}
-        ${cell('🌙', 'Ночных', t.night ? `${h1(t.night)} ч` : '—')}
-        ${cell('🎉', 'Праздники', t.holidays ? `${t.holidays}` : '—')}
-        ${cell('📦', 'Пики', t.peaks ? int(t.peaks) : '—', t.peaks ? `темп ${h1(t.ppc)}` : '')}
-        ${cell('⭐', 'Премия', t.premium ? money(t.premium) : '—', [t.base ? `пики ${money(t.base)} × ${fx(t.pf)}` : '', t.ind ? `Indirect ${money(t.ind)}` : ''].filter(Boolean).join(' + '))}
-        ${cell('🧾', 'Вычеты', money(Math.max(0, t.pay.brutto - t.pay.netto)), 'ZUS, здоровье, PIT')}
+        ${cell('🗓', T('Смен', 'Zmian'), t.has ? `${t.worked}` : '—', t.has ? `${T('по графику', 'w grafiku')} ${t.scheduled}, ${h1(t.hours)} ${hU}` : T('графика нет', 'brak grafiku'))}
+        ${cell('🏖', T('Отпуск', 'Urlop'), t.urlopDays ? `${t.urlopDays} ${P(t.urlopDays, 'день|дня|дней', 'dzień|dni|dni')}` : '—', t.urlopHours ? `${h1(t.urlopHours)} ${hU}` : '')}
+        ${cell('⚠️', T('Пропуски', 'Nieobecności'), `${t.absences}`, `${T('премия', 'premia')} ×${fx(t.pf)}`)}
+        ${cell('⏱', T('Доп. часы', 'Nadgodziny'), t.ovtHours ? `${h1(t.ovtHours)} ${hU}` : '—', t.ovtHours ? [t.ovt50 ? `+50% ${h1(t.ovt50)} ${hU}` : '', t.ovt100 ? `+100% ${h1(t.ovt100)} ${hU}` : ''].filter(Boolean).join(', ') : '')}
+        ${cell('🌙', T('Ночных', 'Nocnych'), t.night ? `${h1(t.night)} ${hU}` : '—')}
+        ${cell('🎉', T('Праздники', 'Święta'), t.holidays ? `${t.holidays}` : '—')}
+        ${cell('📦', T('Пики', 'Piki'), t.peaks ? int(t.peaks) : '—', t.peaks ? `${T('темп', 'tempo')} ${h1(t.ppc)}` : '')}
+        ${cell('⭐', T('Премия', 'Premia'), t.premium ? money(t.premium) : '—', [t.base ? `${T('пики', 'piki')} ${money(t.base)} × ${fx(t.pf)}` : '', t.ind ? `Indirect ${money(t.ind)}` : ''].filter(Boolean).join(' + '))}
+        ${cell('🧾', T('Вычеты', 'Potrącenia'), money(Math.max(0, t.pay.brutto - t.pay.netto)), T('ZUS, здоровье, PIT', 'ZUS, zdrowotna, PIT'))}
       </div></div>`;
-  }).join('') || '<div class="empty"><b>Пока пусто</b>Итоги появятся, когда начнёшь записывать смены.</div>';
+  }).join('') || `<div class="empty"><b>${T('Пока пусто', 'Na razie pusto')}</b>${T('Итоги появятся, когда начнёшь записывать смены.', 'Podsumowania pojawią się, gdy zaczniesz zapisywać zmiany.')}</div>`;
 }
 
 function renderRates() {
   const mk = C.monthKey(new Date());
   const card = ([st, cfg]) => {
     const a = C.monthAgg(DB.entries, st, mk), cur = Math.round(a.pph), maxR = cfg.tr[cfg.tr.length - 1][2];
-    return `<div class="card rate-card" style="--stc:${cfg.col}"><div class="gauge-h"><b>${cfg.name}, ${esc(cfg.full)}</b><small>норма ${cfg.norm} в час${cfg.hourly ? ', ставка за час' : ''}</small></div>
-      ${cfg.tr.map(([lo, hi, r]) => { const on = a.H && cur >= lo && cur <= hi; return `<div class="rate-row${on ? ' cur' : ''}"><div>${lo === 0 ? `до ${hi}` : hi === 999 ? `от ${lo}` : `${lo}–${hi}`} в час${on ? ', твой темп' : ''}<div class="rate-bar"><i style="width:${Math.round(r / maxR * 100)}%"></i></div></div><b>${rateTxt(st, r)}</b></div>`; }).join('')}</div>`;
+    return `<div class="card rate-card" style="--stc:${cfg.col}"><div class="gauge-h"><b>${cfg.name}, ${esc(cfg.full)}</b><small>${T('норма', 'norma')} ${cfg.norm} ${T('в час', 'na godzinę')}${cfg.hourly ? T(', ставка за час', ', stawka za godzinę') : ''}</small></div>
+      ${cfg.tr.map(([lo, hi, r]) => { const on = a.H && cur >= lo && cur <= hi; return `<div class="rate-row${on ? ' cur' : ''}"><div>${lo === 0 ? `${T('до', 'do')} ${hi}` : hi === 999 ? `${T('от', 'od')} ${lo}` : `${lo}–${hi}`} ${T('в час', 'na godz.')}${on ? T(', твой темп', ', twoje tempo') : ''}<div class="rate-bar"><i style="width:${Math.round(r / maxR * 100)}%"></i></div></div><b>${rateTxt(st, r)}</b></div>`; }).join('')}</div>`;
   };
   const all = Object.entries(C.ST);
-  $('rates-list').innerHTML = `<h2 class="sec" style="margin-top:0">Мои станции <button class="link" data-act="st-edit">изменить</button></h2>`
+  $('rates-list').innerHTML = `<h2 class="sec" style="margin-top:0">${T('Мои станции', 'Moje stanowiska')} <button class="link" data-act="st-edit">${T('изменить', 'zmień')}</button></h2>`
     + DB.mainSt.map(k => card([k, C.ST[k]])).join('')
-    + '<h2 class="sec">Дополнительно</h2>' + all.filter(([k]) => isExtra(k)).map(card).join('')
-    + '<p class="hint">Премия = штуки сверх нормы × ставка по среднему темпу месяца. У ZK (Załadunek) — часы на станции × ставка за час, по Aneksowi 2/2026 с 01.06.2026.</p>';
+    + `<h2 class="sec">${T('Дополнительно', 'Więcej')}</h2>` + all.filter(([k]) => isExtra(k)).map(card).join('')
+    + `<p class="hint">${T('Премия = штуки сверх нормы × ставка по среднему темпу месяца. У ZK (Załadunek) — часы на станции × ставка за час, по Aneksowi 2/2026 с 01.06.2026.', 'Premia = sztuki ponad normę × stawka według średniego tempa miesiąca. Przy ZK (Załadunek) — godziny na stanowisku × stawka za godzinę, wg Aneksu 2/2026 od 01.06.2026.')}</p>`;
 }
 
+// Каждое правило: [значок, по-русски, пояснение, po polsku, wyjaśnienie].
 const BHP = [
   { h: 'Безопасный нож', pl: 'Bezpieczna obsługa noża bezpiecznego', r: [
-    ['✅', 'Только ножи от работодателя', 'Не приноси личные ножи и не используй недопущенные.'],
-    ['✅', 'Проверь нож перед работой', 'Механизм выдвижения, лезвие, блокировка. Повреждённым не работай.'],
-    ['✅', 'Режь от себя', 'Держи руку на расстоянии от лезвия, без резких движений.'],
-    ['🚫', 'Не переделывай нож', 'Не обматывай лентой, не сверли. Сломался — прекрати работу и скажи руководителю.']],
-    warn: 'О любой травме или порезе сразу сообщи руководителю. При грубом нарушении BHP (без СИЗ, чужой нож) можно потерять право на доплату больничного до 100% и единовременную компенсацию.' },
+    ['✅', 'Только ножи от работодателя', 'Не приноси личные ножи и не используй недопущенные.', 'Tylko noże od pracodawcy', 'Nie przynoś własnych noży i nie używaj niedopuszczonych.'],
+    ['✅', 'Проверь нож перед работой', 'Механизм выдвижения, лезвие, блокировка. Повреждённым не работай.', 'Sprawdź nóż przed pracą', 'Mechanizm wysuwania, ostrze, blokada. Uszkodzonym nie pracuj.'],
+    ['✅', 'Режь от себя', 'Держи руку на расстоянии от лезвия, без резких движений.', 'Tnij od siebie', 'Trzymaj rękę z dala od ostrza, bez gwałtownych ruchów.'],
+    ['🚫', 'Не переделывай нож', 'Не обматывай лентой, не сверли. Сломался — прекрати работу и скажи руководителю.', 'Nie przerabiaj noża', 'Nie owijaj taśmą, nie wierć. Zepsuł się — przerwij pracę i powiedz przełożonemu.']],
+    warn: 'О любой травме или порезе сразу сообщи руководителю. При грубом нарушении BHP (без СИЗ, чужой нож) можно потерять право на доплату больничного до 100% и единовременную компенсацию.',
+    warnPl: 'O każdym urazie lub skaleczeniu od razu powiedz przełożonemu. Przy rażącym naruszeniu BHP (bez ŚOI, cudzy nóż) można stracić prawo do dopłaty do 100% chorobowego i jednorazowe odszkodowanie.' },
   { h: 'Химия на складе', pl: 'Produkty chemiczne na magazynie', r: [
-    ['1', 'Любое повреждение — сразу руководителю', 'Порванная упаковка, утечка, сильный запах.'],
-    ['2', 'Ничего не делай без решения руководителя', 'Не трогай, не переноси, не вытирай повреждённый продукт.'],
-    ['3', 'Изолируй место', 'Прекрати работу с продуктом и жди инструкций.'],
-    ['4', 'Работай в перчатках', 'Даже с целыми упаковками химии.'],
-    ['5', 'Не вставляй ёмкости одна в другую', 'Это повреждает товар и вызывает утечки.']],
-    warn: 'Алгоритм: увидел, не трогай, огради, сообщи.' },
+    ['1', 'Любое повреждение — сразу руководителю', 'Порванная упаковка, утечка, сильный запах.', 'Każde uszkodzenie — od razu do przełożonego', 'Rozdarte opakowanie, wyciek, silny zapach.'],
+    ['2', 'Ничего не делай без решения руководителя', 'Не трогай, не переноси, не вытирай повреждённый продукт.', 'Nic nie rób bez decyzji przełożonego', 'Nie dotykaj, nie przenoś, nie wycieraj uszkodzonego produktu.'],
+    ['3', 'Изолируй место', 'Прекрати работу с продуктом и жди инструкций.', 'Odizoluj miejsce', 'Przerwij pracę z produktem i czekaj na instrukcje.'],
+    ['4', 'Работай в перчатках', 'Даже с целыми упаковками химии.', 'Pracuj w rękawicach', 'Nawet z całymi opakowaniami chemii.'],
+    ['5', 'Не вставляй ёмкости одна в другую', 'Это повреждает товар и вызывает утечки.', 'Nie wkładaj pojemników jeden w drugi', 'To uszkadza towar i powoduje wycieki.']],
+    warn: 'Алгоритм: увидел, не трогай, огради, сообщи.', warnPl: 'Schemat: zauważ, nie dotykaj, odgrodź, zgłoś.' },
   { h: 'Основные правила BHP', pl: 'Podstawowe zasady BHP', r: [
-    ['🦺', 'Жилет всегда застёгнут', 'Kamizelka musi być zawsze zapięta.'],
-    ['👟', 'Рабочая обувь BHP', 'Na terenie magazynu obowiązuje obuwie ochronne.'],
-    ['💇', 'Длинные волосы собраны', 'Długie włosy muszą być spięte.'],
-    ['🪪', 'Бейдж на шнурке с клипсой', 'Identyfikator na smyczy z klipsem bezpieczeństwa.']] },
+    ['🦺', 'Жилет всегда застёгнут', 'Kamizelka musi być zawsze zapięta.', 'Kamizelka zawsze zapięta', ''],
+    ['👟', 'Рабочая обувь BHP', 'Na terenie magazynu obowiązuje obuwie ochronne.', 'Obuwie ochronne BHP', 'Na terenie magazynu obowiązuje obuwie ochronne.'],
+    ['💇', 'Длинные волосы собраны', 'Długie włosy muszą być spięte.', 'Długie włosy spięte', ''],
+    ['🪪', 'Бейдж на шнурке с клипсой', 'Identyfikator na smyczy z klipsem bezpieczeństwa.', 'Identyfikator na smyczy', 'Smycz z klipsem bezpieczeństwa.']] },
   { h: 'Одежда: можно', pl: 'Zasady prawidłowego ubioru', r: [
-    ['👕', 'Футболка с закрытыми плечами, спиной и животом', ''], ['👖', 'Рабочие брюки узкие, целые, без цепочек', 'Шорты — минимум до колена.'],
-    ['🧥', 'Кофта застёгнута по всей длине', 'Манжеты застёгнуты, шнурки из кофты убраны.'], ['💍', 'Небольшие серьги без подвесок', ''],
-    ['👜', 'Маленькая сумочка до A5', 'На выходе показать охране.']] },
+    ['👕', 'Футболка с закрытыми плечами, спиной и животом', '', 'Koszulka zakrywająca ramiona, plecy i brzuch', ''], ['👖', 'Рабочие брюки узкие, целые, без цепочек', 'Шорты — минимум до колена.', 'Spodnie robocze wąskie, całe, bez łańcuszków', 'Szorty — co najmniej do kolan.'],
+    ['🧥', 'Кофта застёгнута по всей длине', 'Манжеты застёгнуты, шнурки из кофты убраны.', 'Bluza zapięta na całej długości', 'Mankiety zapięte, sznurki z bluzy schowane.'], ['💍', 'Небольшие серьги без подвесок', '', 'Małe kolczyki bez wisiorków', ''],
+    ['👜', 'Маленькая сумочка до A5', 'На выходе показать охране.', 'Mała torebka do A5', 'Przy wyjściu pokaż ochronie.']] },
   { h: 'Нельзя носить и вносить', pl: 'Zakazy', r: [
-    ['🧢', 'Кепки, капюшоны, солнечные очки', ''], ['🧣', 'Шарфы, платки, толстые цепи, юбки и платья', ''],
-    ['🔥', 'Зажигалки, сигареты, вейпы', ''], ['🎧', 'Наушники, колонки, зарядки, чайники', ''],
-    ['💊', 'Лекарства и косметику', 'Ингалятор, инсулин — только сообщив руководителю.'], ['🎒', 'Рюкзаки и большие сумки', '']],
-    warn: 'По просьбе охраны покажи вещи и бейдж. Выносить имущество AutoDoc Logistics запрещено.' },
+    ['🧢', 'Кепки, капюшоны, солнечные очки', '', 'Czapki, kaptury, okulary przeciwsłoneczne', ''], ['🧣', 'Шарфы, платки, толстые цепи, юбки и платья', '', 'Szaliki, chusty, grube łańcuchy, spódnice i sukienki', ''],
+    ['🔥', 'Зажигалки, сигареты, вейпы', '', 'Zapalniczki, papierosy, e-papierosy', ''], ['🎧', 'Наушники, колонки, зарядки, чайники', '', 'Słuchawki, głośniki, ładowarki, czajniki', ''],
+    ['💊', 'Лекарства и косметику', 'Ингалятор, инсулин — только сообщив руководителю.', 'Leki i kosmetyki', 'Inhalator, insulina — tylko po zgłoszeniu przełożonemu.'], ['🎒', 'Рюкзаки и большие сумки', '', 'Plecaki i duże torby', '']],
+    warn: 'По просьбе охраны покажи вещи и бейдж. Выносить имущество AutoDoc Logistics запрещено.', warnPl: 'Na prośbę ochrony pokaż rzeczy i identyfikator. Wynoszenie mienia AutoDoc Logistics jest zabronione.' },
 ];
 function renderBhp() {
-  $('bhp').innerHTML = BHP.map(b => `<div class="card bhp-card"><h3>${b.h}</h3><div class="pl">${b.pl}</div>
-    ${b.r.map(([i, t, s]) => `<div class="rule"><span>${i}</span><div><b>${t}</b>${s ? `<p>${s}</p>` : ''}</div></div>`).join('')}
-    ${b.warn ? `<div class="bhp-warn">${b.warn}</div>` : ''}</div>`).join('');
+  const pl = LANG === 'pl';
+  $('bhp').innerHTML = BHP.map(b => `<div class="card bhp-card"><h3>${pl ? b.pl : b.h}</h3>${pl ? '' : `<div class="pl">${b.pl}</div>`}
+    ${b.r.map(([i, t, s, tp, sp]) => { const tt = pl ? tp : t, ss = pl ? sp : s; return `<div class="rule"><span>${i}</span><div><b>${tt}</b>${ss ? `<p>${ss}</p>` : ''}</div></div>`; }).join('')}
+    ${b.warn ? `<div class="bhp-warn">${pl ? b.warnPl : b.warn}</div>` : ''}</div>`).join('');
 }
 
 function renderNotes() {
-  $('notes-list').innerHTML = DB.notes.length ? [...DB.notes].reverse().map(n => `<div class="note"><p>${esc(n.text)}<small>${esc(n.at)}</small></p><button class="x" data-act="del-note" data-id="${n.id}" aria-label="Удалить заметку">×</button></div>`).join('')
-    : '<div class="empty">Заметок нет.</div>';
+  $('notes-list').innerHTML = DB.notes.length ? [...DB.notes].reverse().map(n => `<div class="note"><p>${esc(n.text)}<small>${esc(n.at)}</small></p><button class="x" data-act="del-note" data-id="${n.id}" aria-label="${T('Удалить заметку', 'Usuń notatkę')}">×</button></div>`).join('')
+    : `<div class="empty">${T('Заметок нет.', 'Brak notatek.')}</div>`;
 }
 
 const EMOJI = ['👷', '📦', '🦺', '🚜', '⚡', '🔥', '🐺', '🦊', '🐻', '🌙', '☕', '🎧'];
 function renderProfile() {
   const th = (v, t) => `<button class="chip${DB.theme === v ? ' on' : ''}" data-act="theme" data-v="${v}">${t}</button>`;
   $('profile-form').innerHTML = `<div class="card">
-    <label class="field"><span>Имя в рейтинге</span><input class="in txt" id="pf-name" maxlength="40" value="${esc(DB.name)}" data-in="pf"></label>
-    <div class="field" style="margin-top:12px"><span>Значок</span><div class="emojis">${EMOJI.map(e => `<button class="${DB.emoji === e ? 'on' : ''}" data-act="emoji" data-v="${e}">${e}</button>`).join('')}</div></div>
-    <div class="field" style="margin-top:12px"><span>Тема</span><div class="chips">${th('auto', 'Как в Telegram')}${th('dark', 'Тёмная')}${th('light', 'Светлая')}</div></div>
-    <div class="field" style="margin-top:12px"><span>Свои станции на «Пиках»</span><button class="more-b" style="margin:0" data-act="st-edit"><span>${DB.mainSt.map(k => C.ST[k].name).join(' · ')}</span><small>изменить</small><i aria-hidden="true">›</i></button></div>
-    <div class="field" style="margin-top:12px"><span>Неделя в календаре начинается с</span><div class="chips"><button class="chip${DB.ws === 'mon' ? ' on' : ''}" data-act="ws" data-v="mon">понедельника</button><button class="chip${DB.ws === 'sun' ? ' on' : ''}" data-act="ws" data-v="sun">воскресенья</button></div></div>
+    <div class="field"><span>${T('Язык', 'Język')}</span><div class="chips"><button class="chip${LANG === 'ru' ? ' on' : ''}" data-act="lang" data-v="ru">Русский</button><button class="chip${LANG === 'pl' ? ' on' : ''}" data-act="lang" data-v="pl">Polski</button></div></div>
+    <label class="field" style="margin-top:12px"><span>${T('Имя в рейтинге', 'Imię w rankingu')}</span><input class="in txt" id="pf-name" maxlength="40" value="${esc(DB.name)}" data-in="pf"></label>
+    <div class="field" style="margin-top:12px"><span>${T('Значок', 'Ikona')}</span><div class="emojis">${EMOJI.map(e => `<button class="${DB.emoji === e ? 'on' : ''}" data-act="emoji" data-v="${e}">${e}</button>`).join('')}</div></div>
+    <div class="field" style="margin-top:12px"><span>${T('Тема', 'Motyw')}</span><div class="chips">${th('auto', T('Как в Telegram', 'Jak w Telegramie'))}${th('dark', T('Тёмная', 'Ciemny'))}${th('light', T('Светлая', 'Jasny'))}</div></div>
+    <div class="field" style="margin-top:12px"><span>${T('Свои станции на «Пиках»', 'Moje stanowiska w «Pikach»')}</span><button class="more-b" style="margin:0" data-act="st-edit"><span>${DB.mainSt.map(k => C.ST[k].name).join(' · ')}</span><small>${T('изменить', 'zmień')}</small><i aria-hidden="true">›</i></button></div>
+    <div class="field" style="margin-top:12px"><span>${T('Неделя в календаре начинается с', 'Tydzień w kalendarzu zaczyna się od')}</span><div class="chips"><button class="chip${DB.ws === 'mon' ? ' on' : ''}" data-act="ws" data-v="mon">${T('понедельника', 'poniedziałku')}</button><button class="chip${DB.ws === 'sun' ? ' on' : ''}" data-act="ws" data-v="sun">${T('воскресенья', 'niedzieli')}</button></div></div>
   </div>
-  <h2 class="sec">Аккаунт</h2>
+  <h2 class="sec">${T('Аккаунт', 'Konto')}</h2>
   <div class="card vf-card ${STATE.verified ? 'ok' : 'no'}">${STATE.verified
-    ? `<div class="vf-h"><span class="vf-ic ok">✓</span><b>${VERIFY_TEXT.ok.title}</b></div><p>${VERIFY_TEXT.ok.text}</p>`
+    ? `<div class="vf-h"><span class="vf-ic ok">✓</span><b>${VERIFY().ok.title}</b></div><p>${VERIFY().ok.text}</p>`
     : verifyBanner()}</div>
-  <h2 class="sec">Данные</h2>
-  <div class="card"><p style="color:var(--sub);font-size:14px">${CS ? 'Копия данных хранится в облаке Telegram и восстановится на новом телефоне.' : 'Облачная копия недоступна в этом окружении.'}</p>
-    <button class="btn btn-bad btn-wide" style="margin-top:12px" data-act="wipe">Удалить все данные с устройства</button></div>`;
+  <h2 class="sec">${T('Данные', 'Dane')}</h2>
+  <div class="card"><p style="color:var(--sub);font-size:14px">${CS ? T('Копия данных хранится в облаке Telegram и восстановится на новом телефоне.', 'Kopia danych jest w chmurze Telegrama i wróci na nowym telefonie.') : T('Облачная копия недоступна в этом окружении.', 'Kopia w chmurze jest tu niedostępna.')}</p>
+    <button class="btn btn-bad btn-wide" style="margin-top:12px" data-act="wipe">${T('Удалить все данные с устройства', 'Usuń wszystkie dane z urządzenia')}</button></div>`;
 }
 
 const RENDER = {
@@ -1539,23 +1610,23 @@ const ACT = {
     if (!STATE.obTeam || !STATE.obGroup) return;
     DB.team = STATE.obTeam; DB.group = STATE.obGroup; DB.teamAt = Date.now(); save(); applyTheme(); haptic.ok();
     $('consent').hidden = true; renderAll(); pushProfile(); pushRank();
-    toast(`Смена ${teamMeta(DB.team).label} ${DB.group}: график и оповещения настроены`);
+    toast(`${T('Смена', 'Zmiana')} ${teamMeta(DB.team).label} ${DB.group}: ${T('график и оповещения настроены', 'grafik i powiadomienia ustawione')}`);
   },
   'station': el => { STATE.curSt = el.dataset.st; if (isExtra(STATE.curSt)) STATE.stMore = true; haptic.pick(); if (STATE.tab !== 'peaks') go('peaks'); else renderPeaks(); },
   'st-more': () => { STATE.stMore = !STATE.stMore; haptic.pick(); renderPeaks(); },
   'st-edit': () => { STATE.stPick = DB.mainSt.slice(); stSheet(); },
   'st-pick': el => { const k = el.dataset.st, a = STATE.stPick, i = a.indexOf(k);
-    if (i >= 0) a.splice(i, 1); else if (a.length < MAIN_MAX) a.push(k); else { haptic.err(); toast(`Не больше ${MAIN_MAX} станций`); return; }
+    if (i >= 0) a.splice(i, 1); else if (a.length < MAIN_MAX) a.push(k); else { haptic.err(); toast(T(`Не больше ${MAIN_MAX} станций`, `Nie więcej niż ${MAIN_MAX} stanowisk`)); return; }
     haptic.pick(); stSheet(); },
   'st-default': () => { STATE.stPick = MAIN_ST.slice(); haptic.pick(); stSheet(); },
   'st-save': () => { if (STATE.stPick.length < MAIN_MIN) return;
     DB.mainSt = cleanMain(STATE.stPick); save(); haptic.ok(); closeSheet();
-    toast(`Свои станции: ${DB.mainSt.map(k => C.ST[k].name).join(', ')}`);
+    toast(`${T('Свои станции', 'Moje stanowiska')}: ${DB.mainSt.map(k => C.ST[k].name).join(', ')}`);
     const top = STATE.stack[STATE.stack.length - 1] || STATE.tab; (RENDER[top] || renderAll)(); },
   'qa-mode': el => { qa.mode = el.dataset.v; qa.f = qa.o = null; haptic.pick(); renderForm(); },
   'qa-save': () => qaSave(),
-  'del-entry': el => confirmSheet('Удалить запись?', 'Премия за месяц пересчитается.', 'Удалить', () => {
-    DB.entries = DB.entries.filter(e => e.id !== +el.dataset.id); save(); renderPeaks(); pushRank(); toast('Запись удалена'); }),
+  'del-entry': el => confirmSheet(T('Удалить запись?', 'Usunąć wpis?'), T('Премия за месяц пересчитается.', 'Premia za miesiąc się przeliczy.'), T('Удалить', 'Usuń'), () => {
+    DB.entries = DB.entries.filter(e => e.id !== +el.dataset.id); save(); renderPeaks(); pushRank(); toast(T('Запись удалена', 'Wpis usunięty')); }),
   'team-sheet': () => { go('sched'); STATE.schedTab = 'cal'; renderSched(); document.getElementById('team-pick').scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'center' }); },
   'team': el => { DB.team = el.dataset.v; const g = teamMeta(DB.team).groups; if (!g.includes(DB.group)) DB.group = g[0]; DB.teamAt = Date.now(); save(); applyTheme(); haptic.ok(); renderHeader(); renderSched(); pushProfile(); pushRank(); },
   'group': el => { DB.group = el.dataset.v; DB.teamAt = Date.now(); save(); haptic.pick(); renderHeader(); renderSched(); pushProfile(); pushRank(); },
@@ -1568,17 +1639,17 @@ const ACT = {
   'ov-pct': el => { STATE.ovPct = +el.dataset.v; document.querySelectorAll('#ov-pct .chip').forEach(c => c.classList.toggle('on', c === el)); },
   'add-ovt': el => { const h = Number(String($('ov-h').value).replace(',', '.'));
     if (!(h > 0 && h <= 16)) { $('ov-h').focus(); haptic.err(); return; }
-    DB.ovt.push({ id: Date.now(), date: el.dataset.day, hours: h, pct: STATE.ovPct === 100 ? 100 : 50, night: $('ov-n').checked }); save(); haptic.ok(); closeSheet(); renderCal(); toast(`Добавлено ${h1(h)} ч сверхурочных`); },
+    DB.ovt.push({ id: Date.now(), date: el.dataset.day, hours: h, pct: STATE.ovPct === 100 ? 100 : 50, night: $('ov-n').checked }); save(); haptic.ok(); closeSheet(); renderCal(); toast(T(`Добавлено ${h1(h)} ч сверхурочных`, `Dodano ${h1(h)} h nadgodzin`)); },
   'del-ovt': el => { DB.ovt = DB.ovt.filter(o => o.id !== +el.dataset.id); save(); closeSheet(); renderCal(); },
   'notify': el => { DB.notify[el.dataset.k] = el.checked; save(); haptic.pick(); pushProfile();
     if (el.checked && tgv('6.9')) { try { TG.requestWriteAccess(); } catch {} } },
   'ics': async () => {
     try { const r = await api('ics', {}); if (!r.url) throw 0;
-      sheet(`<h3>Смены в календаре</h3><p>Это подписка: календарь сам перечитывает ссылку и обновляет смены. Ссылка личная — не пересылай её.</p>
-        <p><b>iPhone:</b> Настройки → Календарь → Учётные записи → Добавить → Другое → Подписной календарь.<br><b>Android:</b> calendar.google.com с компьютера → Другие календари → По URL.</p>
-        <input class="in txt" readonly value="${esc(r.url)}" id="ics-url"><div class="stack"><button class="btn btn-acc btn-wide" data-act="copy-ics">Скопировать ссылку</button><button class="btn btn-ghost btn-wide" data-act="sheet-close">Готово</button></div>`);
-    } catch { toast('Ссылку не получить — проверь связь'); } },
-  'copy-ics': () => { const v = $('ics-url').value; navigator.clipboard?.writeText(v).then(() => toast('Ссылка скопирована'), () => { $('ics-url').select(); }); },
+      sheet(`<h3>${T('Смены в календаре', 'Zmiany w kalendarzu')}</h3><p>${T('Это подписка: календарь сам перечитывает ссылку и обновляет смены. Ссылка личная — не пересылай её.', 'To subskrypcja: kalendarz sam odczytuje link i aktualizuje zmiany. Link jest prywatny — nie przesyłaj go dalej.')}</p>
+        <p>${T('<b>iPhone:</b> Настройки → Календарь → Учётные записи → Добавить → Другое → Подписной календарь.<br><b>Android:</b> calendar.google.com с компьютера → Другие календари → По URL.', '<b>iPhone:</b> Ustawienia → Kalendarz → Konta → Dodaj konto → Inne → Subskrybowany kalendarz.<br><b>Android:</b> calendar.google.com na komputerze → Inne kalendarze → Z adresu URL.')}</p>
+        <input class="in txt" readonly value="${esc(r.url)}" id="ics-url"><div class="stack"><button class="btn btn-acc btn-wide" data-act="copy-ics">${T('Скопировать ссылку', 'Skopiuj link')}</button><button class="btn btn-ghost btn-wide" data-act="sheet-close">${T('Готово', 'Gotowe')}</button></div>`);
+    } catch { toast(T('Ссылку не получить — проверь связь', 'Nie udało się pobrać linku — sprawdź internet')); } },
+  'copy-ics': () => { const v = $('ics-url').value; navigator.clipboard?.writeText(v).then(() => toast(T('Ссылка скопирована', 'Link skopiowany')), () => { $('ics-url').select(); }); },
   'open-bot': () => { const u = `https://t.me/${CFG.BOT_USERNAME}`; TG?.openTelegramLink ? TG.openTelegramLink(u) : window.open(u, '_blank', 'noopener'); },
   'bus': el => { const i = +el.dataset.i; STATE.bus = STATE.bus === i ? null : i; STATE.busAll = false; renderBus(); },
   'bus-all': () => { STATE.busAll = true; renderBus(); },
@@ -1590,13 +1661,13 @@ const ACT = {
   'birth-ok': el => { DB.profile.birthOk = el.checked && RE_DAY.test(DB.profile.birth); save(); haptic.ok(); renderWallet(false); },
   'w-auto': () => { const W = C.walletMonth(), cur = walletView().inp, a = autoInp(W);
     DB.wallet.draft = { ...cur, hours: a.hours, nightHours: a.nightHours, urlopHours: a.urlopHours, ovt50: a.ovt50, ovt100: a.ovt100, ovtNight: a.ovtNight, urlopVar: a.urlopVar };
-    save(); renderWallet(false); toast('Часы и сверхурочные взяты из графика'); },
+    save(); renderWallet(false); toast(T('Часы и сверхурочные взяты из графика', 'Godziny i nadgodziny wzięte z grafiku')); },
   'w-abs': el => { const v = walletView(); DB.wallet.draft = { ...v.inp, absences: +el.dataset.v }; save(); haptic.pick(); renderWallet(false); },
   'w-abs-auto': () => { const v = walletView(); DB.wallet.draft = { ...v.inp, absences: autoHours(v.W).absences }; save(); renderWallet(false); },
   'w-uvar-auto': () => { const v = walletView(); DB.wallet.draft = { ...v.inp, urlopVar: urlopAuto(v.W).perHour }; save(); renderWallet(false); },
-  'w-reset': () => confirmSheet('Сбросить расчёт?', 'Часы снова возьмутся из графика, сохранённый расчёт за этот месяц удалится.', 'Сбросить', () => { DB.wallet.cur = null; DB.wallet.draft = null; save(); renderWallet(false); }),
+  'w-reset': () => confirmSheet(T('Сбросить расчёт?', 'Zresetować wyliczenie?'), T('Часы снова возьмутся из графика, сохранённый расчёт за этот месяц удалится.', 'Godziny znów zostaną wzięte z grafiku, zapisane wyliczenie za ten miesiąc zostanie usunięte.'), T('Сбросить', 'Resetuj'), () => { DB.wallet.cur = null; DB.wallet.draft = null; save(); renderWallet(false); }),
   'w-save': () => { const inp = readWalletInputs(); DB.wallet.cur = { month: inp.month, inp, savedAt: new Date().toISOString() }; DB.wallet.draft = null; save(); haptic.ok();
-    const u = C.walletUntil(inp.month); toast(`Сохранено. Расчёт виден до ${u.slice(8)}.${u.slice(5, 7)}`); renderWallet(false); },
+    const u = C.walletUntil(inp.month); toast(T(`Сохранено. Расчёт виден до ${u.slice(8)}.${u.slice(5, 7)}`, `Zapisano. Wyliczenie widoczne do ${u.slice(8)}.${u.slice(5, 7)}`)); renderWallet(false); },
   'rank-move': el => { STATE.rankMonth = C.addMonths(STATE.rankMonth || C.monthKey(new Date()), +el.dataset.v); renderRating(); },
   'note-add': () => { const t = $('note-in').value.trim().slice(0, 500); if (!t) return; const n = new Date();
     DB.notes.push({ id: Date.now(), text: t, at: `${fmtD(C.iso(n))} ${n.toTimeString().slice(0, 5)}` }); $('note-in').value = ''; save(); haptic.ok(); renderNotes(); },
@@ -1604,12 +1675,14 @@ const ACT = {
   'emoji': el => { DB.emoji = el.dataset.v; save(); haptic.pick(); renderHeader(); renderProfile(); pushRank(); },
   'theme': el => { DB.theme = el.dataset.v; save(); applyTheme(); renderProfile(); },
   'ws': el => { DB.ws = el.dataset.v; save(); renderProfile(); },
-  'wipe': () => confirmSheet('Удалить все данные?', 'Пики, расчёты, заметки и облачная копия будут стёрты с этого аккаунта. Рейтинг на сервере останется.', 'Удалить всё', async () => {
+  'lang': el => switchLang(el.dataset.v),
+  'lang-toggle': () => switchLang(LANG === 'pl' ? 'ru' : 'pl'),
+  'wipe': () => confirmSheet(T('Удалить все данные?', 'Usunąć wszystkie dane?'), T('Пики, расчёты, заметки и облачная копия будут стёрты с этого аккаунта. Рейтинг на сервере останется.', 'Piki, wyliczenia, notatki i kopia w chmurze zostaną usunięte z tego konta. Ranking na serwerze zostanie.'), T('Удалить всё', 'Usuń wszystko'), async () => {
     try { localStorage.removeItem(KEY); localStorage.removeItem(LEGACY); } catch {}
     if (CS) { const keys = ['bn', ...Array.from({ length: 60 }, (_, i) => 'b' + i)]; await csCall('removeItems', keys); }
     DB = defaults(); DB.uid = STATE.uid; DB.consent = { v: CFG.CONSENT_VERSION, at: new Date().toISOString() };
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {}
-    toast('Данные удалены'); go('home'); renderAll(); }),
+    DB.lang = LANG; toast(T('Данные удалены', 'Dane usunięte')); go('home'); renderAll(); }),
   'reverify': el => reverify(el),
   'slip-pick': () => { $('slip-file').click(); },
   'ind-open': () => { haptic.pick(); indSheet(indMonthDefault()); loadIndStats(); },
@@ -1626,10 +1699,10 @@ const ACT = {
       if (k === 'rate') { const m = ['33.00', '31.40', '35.00'].find(x => Math.abs(+x - pr.rate) < .004); p.rateMode = m || 'own'; if (!m) p.rate = pr.rate; }
       else if (k === 'kup') p.kup = pr.kup; else if (k === 'ppk') p.ppk = pr.ppk; else p[k] = pr[k] || 0;
     });
-    save(); haptic.ok(); toast('Кошелёк обновлён по odcinku'); renderOdcinek(); },
-  'slip-del': el => confirmSheet('Удалить odcinek?', 'Проверка и сумма из odcinka за этот месяц удалятся с телефона. В «Прошлых выплатах» вернётся расчёт трекера.', 'Удалить', () => {
+    save(); haptic.ok(); toast(T('Кошелёк обновлён по odcinku', 'Portfel zaktualizowany według odcinka')); renderOdcinek(); },
+  'slip-del': el => confirmSheet(T('Удалить odcinek?', 'Usunąć odcinek?'), T('Проверка и сумма из odcinka за этот месяц удалятся с телефона. В «Прошлых выплатах» вернётся расчёт трекера.', 'Sprawdzenie i kwota z odcinka za ten miesiąc zostaną usunięte z telefonu. W «Poprzednich wypłatach» wróci wyliczenie trackera.'), T('Удалить', 'Usuń'), () => {
     const mk = el.dataset.m; DB.slips.filter(s => s.month === mk && s.gotOn).forEach(s => reportPay({ ...s, gotOn: '' }));
-    DB.slips = DB.slips.filter(s => s.month !== mk); syncSlipHist(mk); save(); STATE.slipView = null; renderOdcinek(); toast('Odcinek удалён'); }),
+    DB.slips = DB.slips.filter(s => s.month !== mk); syncSlipHist(mk); save(); STATE.slipView = null; renderOdcinek(); toast(T('Odcinek удалён', 'Odcinek usunięty')); }),
   'sheet-close': () => closeSheet(),
   'sheet-ok': () => { const f = STATE.sheetOk; STATE.sheetOk = null; closeSheet(); f && f(); },
 };

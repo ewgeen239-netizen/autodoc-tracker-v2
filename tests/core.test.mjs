@@ -224,6 +224,18 @@ t('odcinek: налоги сходятся, недоплата премии ви�
   assert.equal(C.slipCheck([{ month: '2026-10', kind: 'main', f: no2, ovt: {}, other: [] }], { young: false }).items.find(i => /PIT/.test(i.title)).level, 'warn');
 });
 
+t('проверка odcinka по-польски', () => {
+  const f = { brutto: 1000, zus: 137.1, netto: 862.9, bonus: 100 };
+  C.setLang('pl');
+  try {
+    const r = C.slipCheck([{ month: '2026-10', kind: 'main', f, ovt: {}, other: [] }], { tracker: { bonusBase: 200, bonus: 250, pf: 1.25 } });
+    const bad = r.items.find(i => i.level === 'bad');
+    assert.equal(bad.title, 'Premia niedopłacona');
+    assert.match(bad.text, /Brakuje 150,00 zł/);
+    assert.ok(!/[А-Яа-яЁё]/.test(JSON.stringify(r.items)));
+  } finally { C.setLang('ru'); }
+});
+
 t('дата зарплаты: до 10-го, выходные и опыт людей', () => {
   // 10.11.2026 — вторник: 80% в понедельник 9-го, 100% к 10-му
   assert.deepEqual(C.payday('2026-10').days, [{ day: '2026-11-09', p: .8 }, { day: '2026-11-10', p: 1 }]);

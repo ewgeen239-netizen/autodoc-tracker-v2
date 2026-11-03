@@ -10,12 +10,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Sans+Extra+Condensed:wght@500;600;700;800&family=Golos+Text:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="assets/css/app.css?v=20261027.1909">
+<link rel="stylesheet" href="assets/css/app.css?v=20261103.1708">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="assets/js/config.js?v=20261027.1909" defer></script>
-<script src="assets/js/core.js?v=20261027.1909" defer></script>
-<script src="assets/js/slip.js?v=20261027.1909" defer></script>
-<script src="assets/js/app.js?v=20261027.1909" defer></script>
+<script src="assets/js/config.js?v=20261103.1708" defer></script>
+<script src="assets/js/core.js?v=20261103.1708" defer></script>
+<script src="assets/js/slip.js?v=20261103.1708" defer></script>
+<script src="assets/js/app.js?v=20261103.1708" defer></script>
 </head>
 <body data-team="dark">
 
@@ -32,10 +32,10 @@
   <div class="boot-title">AutoDoc Tracker</div>
   <div class="boot-sub">M13 Outbound, Szczecin</div>
   <ul class="boot-checks" id="boot-checks">
-    <li data-k="env">Среда Telegram</li>
-    <li data-k="sign">Подпись аккаунта</li>
-    <li data-k="data">Данные на устройстве</li>
-    <li data-k="sched">График смен</li>
+    <li data-k="env" data-pl="Środowisko Telegram">Среда Telegram</li>
+    <li data-k="sign" data-pl="Podpis konta">Подпись аккаунта</li>
+    <li data-k="data" data-pl="Dane na urządzeniu">Данные на устройстве</li>
+    <li data-k="sched" data-pl="Grafik zmian">График смен</li>
   </ul>
   <div class="boot-note" id="boot-note" hidden></div>
 </div>
@@ -44,21 +44,22 @@
 <div id="consent" class="gate" hidden>
   <div class="gate-card">
     <div class="tape" aria-hidden="true"></div>
-    <h1 class="gate-h">Перед началом</h1>
-    <p>Это личный трекер сотрудника, а не официальное приложение AutoDoc. Премия и зарплата считаются по публичным таблицам и польским ставкам 2026 года — это ориентир, итог всегда в pasku płacowym.</p>
-    <p>Пики, заметки, дата рождения и расчёты хранятся на твоём телефоне и в твоём облаке Telegram. В общий рейтинг уходят только имя, аватар и месячные итоги.</p>
-    <label class="check"><input type="checkbox" id="consent-cb"><span>Понимаю и соглашаюсь</span></label>
-    <button class="btn btn-acc btn-wide" id="consent-btn" data-act="consent" disabled>Начать</button>
+    <h1 class="gate-h" data-pl="Zanim zaczniesz">Перед началом</h1>
+    <p data-pl="To prywatny tracker pracownika, a nie oficjalna aplikacja AutoDoc. Premia i wypłata liczą się według publicznych tabel i polskich stawek na 2026 rok — to orientacja, wynik zawsze jest w pasku płacowym.">Это личный трекер сотрудника, а не официальное приложение AutoDoc. Премия и зарплата считаются по публичным таблицам и польским ставкам 2026 года — это ориентир, итог всегда в pasku płacowym.</p>
+    <p data-pl="Piki, notatki, data urodzenia i wyliczenia są w twoim telefonie i w twojej chmurze Telegrama. Do wspólnego rankingu trafiają tylko imię, awatar i podsumowania miesiąca.">Пики, заметки, дата рождения и расчёты хранятся на твоём телефоне и в твоём облаке Telegram. В общий рейтинг уходят только имя, аватар и месячные итоги.</p>
+    <label class="check"><input type="checkbox" id="consent-cb"><span data-pl="Rozumiem i zgadzam się">Понимаю и соглашаюсь</span></label>
+    <button class="btn btn-acc btn-wide" id="consent-btn" data-act="consent" disabled data-pl="Zaczynamy">Начать</button>
   </div>
 </div>
 
 <div id="app" class="app" hidden>
   <header class="top" id="top">
-    <button class="me" data-act="go" data-to="profile" aria-label="Профиль">
+    <button class="me" data-act="go" data-to="profile" aria-label="Профиль" data-pl-aria="Profil">
       <span class="av" id="av"><span id="av-em">👷</span></span>
       <span class="me-txt"><b id="me-name">Сотрудник</b><small id="me-sub">M13 Outbound</small></span>
     </button>
-    <button class="shift-chip" id="shift-chip" data-act="team-sheet" aria-label="Выбрать смену и группу">
+    <button class="lang-chip" id="lang-chip" data-act="lang-toggle" aria-label="Язык: русский / польский" data-pl-aria="Język: rosyjski / polski"><span data-l="ru">RU</span><span data-l="pl">PL</span></button>
+    <button class="shift-chip" id="shift-chip" data-act="team-sheet" aria-label="Выбрать смену и группу" data-pl-aria="Wybierz zmianę i grupę">
       <span class="sc-dot"></span><span id="shift-chip-t">DARK A</span>
     </button>
   </header>
@@ -73,67 +74,67 @@
         <div class="plate-cap" id="plate-cap">премия за пики и Indirect в этом месяце</div>
         <button class="plate-check" data-act="go" data-to="odcinek">
           <span class="pc-ic" aria-hidden="true">✓</span>
-          <span class="pc-b"><b>Проверка odcinek</b><small id="plate-check-sub">загрузи odcinek płacowy от фирмы</small></span>
+          <span class="pc-b"><b data-pl="Sprawdzenie odcinka">Проверка odcinek</b><small id="plate-check-sub">загрузи odcinek płacowy от фирмы</small></span>
           <span class="pc-go" aria-hidden="true">›</span>
         </button>
       </div>
 
-      <button class="ind-bar" id="ind-bar" data-act="ind-open" aria-label="Премия Indirect: сумма и часы"></button>
+      <button class="ind-bar" id="ind-bar" data-act="ind-open" aria-label="Премия Indirect: сумма и часы" data-pl-aria="Premia Indirect: kwota i godziny"></button>
 
       <div class="card next" id="next-shift"></div>
 
       <div class="stats3">
-        <div class="stat"><b id="h-hours">0</b><span>часов</span></div>
-        <div class="stat"><b id="h-peaks">0</b><span>пиков</span></div>
-        <div class="stat"><b id="h-shifts">0</b><span>смен</span></div>
+        <div class="stat"><b id="h-hours">0</b><span data-pl="godzin">часов</span></div>
+        <div class="stat"><b id="h-peaks">0</b><span data-pl="pików">пиков</span></div>
+        <div class="stat"><b id="h-shifts">0</b><span data-pl="zmian">смен</span></div>
       </div>
 
-      <h2 class="sec">По станциям</h2>
+      <h2 class="sec" data-pl="Według stanowisk">По станциям</h2>
       <div id="home-st" class="list"></div>
 
       <div class="row2">
-        <button class="tile" data-act="go" data-to="peaks"><span class="tile-ic">＋</span><b>Записать смену</b><small>пики и время</small></button>
-        <button class="tile" data-act="go" data-to="wallet"><span class="tile-ic">zł</span><b>Кошелёк</b><small id="home-wallet-sub">зарплата за месяц</small></button>
+        <button class="tile" data-act="go" data-to="peaks"><span class="tile-ic">＋</span><b data-pl="Zapisz zmianę">Записать смену</b><small data-pl="piki i godziny">пики и время</small></button>
+        <button class="tile" data-act="go" data-to="wallet"><span class="tile-ic">zł</span><b data-pl="Portfel">Кошелёк</b><small id="home-wallet-sub">зарплата за месяц</small></button>
       </div>
       <button class="strow rank-tile" data-act="go" data-to="rating">
         <span class="st-tag rank-ic" aria-hidden="true">🏆</span>
-        <span class="strow-b"><b>Рейтинг премий</b><small id="home-rank-sub">кто сколько заработал за месяц</small></span>
+        <span class="strow-b"><b data-pl="Ranking premii">Рейтинг премий</b><small id="home-rank-sub">кто сколько заработал за месяц</small></span>
         <span class="strow-r" id="home-rank-place"></span>
       </button>
     </section>
 
     <!-- ПИКИ -->
     <section class="page" id="p-peaks" data-tab="peaks">
-      <h1 class="pg-h">Пики</h1>
+      <h1 class="pg-h" data-pl="Piki">Пики</h1>
       <div class="seg st-seg" id="st-seg" role="tablist"></div>
       <div id="st-more"></div>
       <div class="card gauge" id="gauge"></div>
       <div class="card form" id="qa"></div>
-      <h2 class="sec">Этот месяц <button class="link" data-act="go" data-to="rates">таблица ставок</button></h2>
+      <h2 class="sec"><span data-pl="Ten miesiąc">Этот месяц</span> <button class="link" data-act="go" data-to="rates" data-pl="tabela stawek">таблица ставок</button></h2>
       <div id="peaks-month" class="list"></div>
     </section>
 
     <!-- ГРАФИК -->
     <section class="page" id="p-sched" data-tab="sched">
-      <h1 class="pg-h">График</h1>
+      <h1 class="pg-h" data-pl="Grafik">График</h1>
       <div class="seg" role="tablist">
-        <button class="seg-b on" data-act="sched-tab" data-v="cal" role="tab">Смены</button>
-        <button class="seg-b" data-act="sched-tab" data-v="bus" role="tab">Автобусы</button>
+        <button class="seg-b on" data-act="sched-tab" data-v="cal" role="tab" data-pl="Zmiany">Смены</button>
+        <button class="seg-b" data-act="sched-tab" data-v="bus" role="tab" data-pl="Autobusy">Автобусы</button>
       </div>
       <div id="sched-cal">
         <div class="team-pick" id="team-pick"></div>
         <div class="card cal">
           <div class="cal-h">
-            <button class="ico" data-act="cal-move" data-v="-1" aria-label="Предыдущий месяц">‹</button>
+            <button class="ico" data-act="cal-move" data-v="-1" aria-label="Предыдущий месяц" data-pl-aria="Poprzedni miesiąc">‹</button>
             <button class="cal-title" id="cal-title" data-act="cal-now">Месяц</button>
-            <button class="ico" data-act="cal-move" data-v="1" aria-label="Следующий месяц">›</button>
+            <button class="ico" data-act="cal-move" data-v="1" aria-label="Следующий месяц" data-pl-aria="Następny miesiąc">›</button>
           </div>
           <div class="cal-grid" id="cal-grid"></div>
           <div class="cal-legend" id="cal-legend"></div>
         </div>
-        <p class="hint">Нажми на день, чтобы отметить отпуск, пропуск или добавить сверхурочные.</p>
+        <p class="hint" data-pl="Kliknij dzień, żeby zaznaczyć urlop, nieobecność albo dodać nadgodziny.">Нажми на день, чтобы отметить отпуск, пропуск или добавить сверхурочные.</p>
 
-        <h2 class="sec">Оповещения в Telegram</h2>
+        <h2 class="sec" data-pl="Powiadomienia w Telegramie">Оповещения в Telegram</h2>
         <div class="card" id="notify-card"></div>
       </div>
       <div id="sched-bus" hidden></div>
@@ -141,51 +142,51 @@
 
     <!-- КОШЕЛЁК -->
     <section class="page" id="p-wallet" data-tab="wallet">
-      <h1 class="pg-h">Кошелёк</h1>
+      <h1 class="pg-h" data-pl="Portfel">Кошелёк</h1>
       <div class="slip" id="slip"></div>
       <div id="wallet-form"></div>
       <div id="wallet-break"></div>
-      <h2 class="sec">Прошлые выплаты</h2>
+      <h2 class="sec" data-pl="Poprzednie wypłaty">Прошлые выплаты</h2>
       <div id="wallet-hist" class="list"></div>
     </section>
 
     <!-- ЕЩЁ -->
     <section class="page" id="p-more" data-tab="more">
-      <h1 class="pg-h">Ещё</h1>
+      <h1 class="pg-h" data-pl="Więcej">Ещё</h1>
       <div class="menu">
-        <button data-act="go" data-to="rating"><span>🏆</span><b>Рейтинг премий</b><small>кто сколько заработал на пиках</small></button>
-        <button data-act="go" data-to="odcinek"><span>🧾</span><b>Проверка odcinek</b><small>налоги, премия и дата зарплаты</small></button>
-        <button data-act="go" data-to="archive"><span>🗂</span><b>Итоги месяцев</b><small>смены, отпуск, пропуски, премия по месяцам</small></button>
-        <button data-act="go" data-to="rates"><span>📊</span><b>Таблицы ставок</b><small>все 12 станций, свои — сверху</small></button>
-        <button data-act="go" data-to="bhp"><span>🦺</span><b>BHP и правила склада</b><small>нож, химия, одежда</small></button>
-        <button data-act="go" data-to="notes"><span>📝</span><b>Заметки</b><small>только на этом телефоне</small></button>
-        <button data-act="go" data-to="profile"><span>⚙️</span><b>Профиль и настройки</b><small>имя, тема, данные</small></button>
+        <button data-act="go" data-to="rating"><span>🏆</span><b data-pl="Ranking premii">Рейтинг премий</b><small data-pl="kto ile zarobił na pikach">кто сколько заработал на пиках</small></button>
+        <button data-act="go" data-to="odcinek"><span>🧾</span><b data-pl="Sprawdzenie odcinka">Проверка odcinek</b><small data-pl="podatki, premia i data wypłaty">налоги, премия и дата зарплаты</small></button>
+        <button data-act="go" data-to="archive"><span>🗂</span><b data-pl="Podsumowania miesięcy">Итоги месяцев</b><small data-pl="zmiany, urlop, nieobecności, premia w miesiącach">смены, отпуск, пропуски, премия по месяцам</small></button>
+        <button data-act="go" data-to="rates"><span>📊</span><b data-pl="Tabele stawek">Таблицы ставок</b><small data-pl="wszystkie 12 stanowisk, twoje na górze">все 12 станций, свои — сверху</small></button>
+        <button data-act="go" data-to="bhp"><span>🦺</span><b data-pl="BHP i zasady magazynu">BHP и правила склада</b><small data-pl="nóż, chemia, odzież">нож, химия, одежда</small></button>
+        <button data-act="go" data-to="notes"><span>📝</span><b data-pl="Notatki">Заметки</b><small data-pl="tylko na tym telefonie">только на этом телефоне</small></button>
+        <button data-act="go" data-to="profile"><span>⚙️</span><b data-pl="Profil i ustawienia">Профиль и настройки</b><small data-pl="język, imię, motyw, dane">язык, имя, тема, данные</small></button>
       </div>
     </section>
 
     <!-- подстраницы -->
-    <section class="page sub" id="p-rating"><h1 class="pg-h">Рейтинг премий</h1>
-      <p class="hint" style="margin:-6px 0 12px">Премия: пики с обецностью (без пропусков ×1,25) + Indirect.</p>
-      <div class="month-nav"><button class="ico" data-act="rank-move" data-v="-1" aria-label="Предыдущий месяц">‹</button><b id="rank-month">—</b><button class="ico" data-act="rank-move" data-v="1" aria-label="Следующий месяц">›</button></div>
+    <section class="page sub" id="p-rating"><h1 class="pg-h" data-pl="Ranking premii">Рейтинг премий</h1>
+      <p class="hint" style="margin:-6px 0 12px" data-pl="Premia: piki z obecnością (bez nieobecności ×1,25) + Indirect.">Премия: пики с обецностью (без пропусков ×1,25) + Indirect.</p>
+      <div class="month-nav"><button class="ico" data-act="rank-move" data-v="-1" aria-label="Предыдущий месяц" data-pl-aria="Poprzedni miesiąc">‹</button><b id="rank-month">—</b><button class="ico" data-act="rank-move" data-v="1" aria-label="Следующий месяц" data-pl-aria="Następny miesiąc">›</button></div>
       <div id="rank-list" class="list"></div></section>
-    <section class="page sub" id="p-odcinek"><h1 class="pg-h">Проверка odcinek</h1>
+    <section class="page sub" id="p-odcinek"><h1 class="pg-h" data-pl="Sprawdzenie odcinka">Проверка odcinek</h1>
       <input type="file" id="slip-file" accept="application/pdf,.pdf" hidden>
       <div id="odcinek"></div></section>
-    <section class="page sub" id="p-archive"><h1 class="pg-h">Итоги месяцев</h1><div id="archive-list" class="list"></div></section>
-    <section class="page sub" id="p-rates"><h1 class="pg-h">Таблицы ставок</h1><div id="rates-list"></div></section>
-    <section class="page sub" id="p-bhp"><h1 class="pg-h">BHP и правила</h1><div id="bhp"></div></section>
-    <section class="page sub" id="p-notes"><h1 class="pg-h">Заметки</h1>
-      <div class="note-new"><textarea id="note-in" rows="2" maxlength="500" placeholder="Например: в пятницу сдать бейдж на продление"></textarea><button class="btn btn-acc" data-act="note-add">Сохранить</button></div>
+    <section class="page sub" id="p-archive"><h1 class="pg-h" data-pl="Podsumowania miesięcy">Итоги месяцев</h1><div id="archive-list" class="list"></div></section>
+    <section class="page sub" id="p-rates"><h1 class="pg-h" data-pl="Tabele stawek">Таблицы ставок</h1><div id="rates-list"></div></section>
+    <section class="page sub" id="p-bhp"><h1 class="pg-h" data-pl="BHP i zasady">BHP и правила</h1><div id="bhp"></div></section>
+    <section class="page sub" id="p-notes"><h1 class="pg-h" data-pl="Notatki">Заметки</h1>
+      <div class="note-new"><textarea id="note-in" rows="2" maxlength="500" placeholder="Например: в пятницу сдать бейдж на продление" data-pl-ph="Np.: w piątek oddać identyfikator do przedłużenia"></textarea><button class="btn btn-acc" data-act="note-add" data-pl="Zapisz">Сохранить</button></div>
       <div id="notes-list" class="list"></div></section>
-    <section class="page sub" id="p-profile"><h1 class="pg-h">Профиль и настройки</h1><div id="profile-form"></div></section>
+    <section class="page sub" id="p-profile"><h1 class="pg-h" data-pl="Profil i ustawienia">Профиль и настройки</h1><div id="profile-form"></div></section>
   </main>
 
-  <nav class="tabs" id="tabs" aria-label="Разделы">
-    <button data-act="go" data-to="home" class="on"><i class="ti ti-home"></i><span>Главная</span></button>
-    <button data-act="go" data-to="peaks"><i class="ti ti-box"></i><span>Пики</span></button>
-    <button data-act="go" data-to="sched"><i class="ti ti-cal"></i><span>График</span></button>
-    <button data-act="go" data-to="wallet"><i class="ti ti-wallet"></i><span>Кошелёк</span></button>
-    <button data-act="go" data-to="more"><i class="ti ti-more"></i><span>Ещё</span></button>
+  <nav class="tabs" id="tabs" aria-label="Разделы" data-pl-aria="Sekcje">
+    <button data-act="go" data-to="home" class="on"><i class="ti ti-home"></i><span data-pl="Główna">Главная</span></button>
+    <button data-act="go" data-to="peaks"><i class="ti ti-box"></i><span data-pl="Piki">Пики</span></button>
+    <button data-act="go" data-to="sched"><i class="ti ti-cal"></i><span data-pl="Grafik">График</span></button>
+    <button data-act="go" data-to="wallet"><i class="ti ti-wallet"></i><span data-pl="Portfel">Кошелёк</span></button>
+    <button data-act="go" data-to="more"><i class="ti ti-more"></i><span data-pl="Więcej">Ещё</span></button>
   </nav>
 </div>
 

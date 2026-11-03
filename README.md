@@ -16,6 +16,8 @@ Telegram Mini App и бот для склада AutoDoc M13 Outbound, Szczecin: 
 | `supabase/functions/api/` | Edge Function: проверка подписи Telegram, рейтинг, профиль оповещений, лента `.ics`, даты зарплаты, статистика Indirect. `python3 tools/bundle_api.py` собирает `index.bundled.ts` для редактора Supabase. |
 | `tests/` | `node tests/core.test.mjs`, `node tests/slip.test.mjs`, `node tests/api.test.mjs`, `python -m unittest discover tests`. |
 
+**Язык.** Русский и польский: переключатель RU | PL в шапке и в профиле. По умолчанию — язык Telegram (польский для `pl`, иначе русский), выбор сохраняется. В коде каждый текст — парой `T('по-русски', 'po polsku')`, склонения по числу — `P(n, 'смена|смены|смен', 'zmiana|zmiany|zmian')`, статичный HTML — атрибутом `data-pl`.
+
 ## Как считается
 
 **Премия.** Все пики и часы станции за месяц → средний темп → ступень ставки → (пики − норма) × ставка. Ночная смена 22:00–06:00 принадлежит дню, в который началась.
