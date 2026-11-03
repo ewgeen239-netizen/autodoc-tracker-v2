@@ -135,4 +135,35 @@ await t('rank: Indirect в премии — только сколько запи
     assert.equal((await post({ initData: initData({ ...me, id: 795 }), action: 'rank', row: { ...row, bonus: 5000, indirect: 5000 } })).status, 422);
   } finally { globalThis.fetch = real; }
 });
+await t('peaks: записи месяца с доверенным uid, мусор отбрасывается', async () => {
+  const M = new Date().toISOString().slice(0, 7);
+  calls.length = 0;
+  const entries = [
+    { id: 1730000000001, station: 'zk', day: `${M}-02`, peaks: 300, hours: 8, from: '22:00', to: '06:00', added: '06:10' },
+    { id: 1730000000002, station: 'pa', day: '2020-01-01', peaks: 300, hours: 8 },          // чужой месяц
+    { id: 1730000000003, station: '<b>', day: `${M}-03`, peaks: 300, hours: 8 },           // мусорная станция
+    { id: 1730000000004, station: 'os', day: `${M}-03`, peaks: 300, hours: 40 },           // 40 часов
+  ];
+  const r = await post({ initData: initData({ ...me, id: 796 }), action: 'peaks', month: M, entries, uid: '1' });
+  assert.equal(r.status, 200); assert.equal((await r.json()).n, 1);
+  const del = calls.find(c => c.method === 'DELETE');
+  assert.match(del.url, /peaks\?uid=eq\.796&month=eq\..*admin_at=is\.null/);
+  const w = calls.find(c => c.method === 'POST');
+  assert.equal(w.body.length, 1); assert.equal(w.body[0].uid, '796'); assert.equal(w.body[0].station, 'zk'); assert.equal(w.body[0].t_from, '22:00');
+});
+await t('peaks: правку админа телефон не перетирает и получает её в ответе', async () => {
+  const M = new Date().toISOString().slice(0, 7), real = globalThis.fetch, seen = [];
+  globalThis.fetch = async (url, init = {}) => {
+    seen.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    if (String(url).includes('admin_at=not.is.null')) return new Response(JSON.stringify([{ id: 11, day: `${M}-04`, station: 'sio', peaks: 500, hours: 8, t_from: null, t_to: null, deleted: false },
+      { id: 12, day: `${M}-05`, station: 'pa', peaks: 10, hours: 1, deleted: true }]), { status: 200 });
+    return new Response('', { status: 201 });
+  };
+  try {
+    const entries = [11, 12, 13].map(id => ({ id, station: 'os', day: `${M}-04`, peaks: 500, hours: 8 }));
+    const j = await (await post({ initData: initData({ ...me, id: 797 }), action: 'peaks', month: M, entries })).json();
+    assert.deepEqual(j.fixes.map(f => [f.id, f.station, f.deleted]), [[11, 'sio', false], [12, 'pa', true]]);
+    assert.deepEqual(seen.find(c => c.method === 'POST').body.map(r => r.id), [13]);   // своё — только 13
+  } finally { globalThis.fetch = real; }
+});
 console.log(`\n${n} проверок пройдено`);

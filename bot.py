@@ -73,7 +73,15 @@ ST = {
     "sio": ("SIO", "Single Item",    54,  [(0, 54, 0), (55, 60, .22), (61, 64, .27), (65, 68, .31), (69, 75, .36), (76, 82, .39), (83, 95, .44), (96, 999, .46)]),
     "pc":  ("PC",  "Picking Consol", 225, [(0, 225, 0), (226, 250, .04), (251, 267, .06), (268, 283, .08), (284, 313, .09), (314, 342, .10), (343, 394, .121), (395, 999, .141)]),
     "plc": ("PLC", "Placement Consol", 180, [(0, 180, 0), (181, 200, .04), (201, 214, .06), (215, 227, .08), (228, 250, .10), (251, 274, .12), (275, 316, .16), (317, 999, .18)]),
+    "pi":  ("PI",  "Picking Inventory", 160, [(0, 160, 0), (161, 178, .08), (179, 189, .10), (190, 202, .12), (203, 222, .14), (223, 243, .16), (244, 281, .19), (282, 999, .21)]),
+    "op":  ("OP",  "Oversize Placement", 144, [(0, 144, 0), (145, 160, .07), (161, 170, .08), (171, 181, .11), (182, 200, .13), (201, 218, .15), (219, 252, .17), (253, 999, .19)]),
+    "hr":  ("HR",  "Direct Receive HR", 140, [(0, 140, 0), (141, 158, .03), (159, 176, .061), (177, 190, .076), (191, 205, .096), (206, 230, .11), (231, 255, .132), (256, 999, .146)]),
+    "dp":  ("DP",  "Disassembly Pallet", 165, [(0, 165, 0), (166, 183, .03), (184, 196, .05), (197, 208, .07), (209, 229, .09), (230, 251, .11), (252, 289, .13), (290, 999, .15)]),
+    "rod": ("ROD", "Receiving On Demand", 165, [(0, 165, 0), (166, 183, .07), (184, 196, .09), (197, 208, .11), (209, 229, .13), (230, 250, .15), (251, 289, .17), (290, 999, .19)]),
+    "pod": ("POD", "Putwall On Demand", 212, [(0, 212, 0), (213, 235, .03), (236, 251, .05), (252, 267, .07), (268, 295, .08), (296, 322, .09), (323, 371, .11), (372, 999, .12)]),
+    "zk":  ("ZK",  "Załadunek kontenerów", 100, [(0, 100, 0), (101, 110, 8.92), (111, 115, 11.90), (116, 130, 13.69), (131, 145, 16.07), (146, 160, 17.85), (161, 999, 20.83)]),
 }
+HOURLY = {"zk"}                              # ставка за час, а не за штуку сверх нормы
 
 
 def calc(st, peaks, hours):
@@ -84,7 +92,8 @@ def calc(st, peaks, hours):
     rp = int(pph + 0.5)            # как Math.round в JS: 52.5 → 53 (round() в Python дал бы 52)
     r = next((x for lo, hi, x in table if lo <= rp <= hi), table[-1][2])
     tier = next((i for i, (lo, hi, _) in enumerate(table) if lo <= rp <= hi), len(table) - 1)
-    return dict(pph=pph, norm=norm, above=above, rate=r, bonus=above * r, tier=tier, tiers=len(table))
+    bonus = hours * r if st in HOURLY else above * r
+    return dict(pph=pph, norm=norm, above=above, rate=r, bonus=bonus, tier=tier, tiers=len(table))
 
 
 def bar(i, n):
@@ -319,7 +328,8 @@ def calc_text(st, peaks, hours):
     return (f"🧮 <b>{name}, {full}</b>\n\n"
             f"Пики: <b>{peaks}</b> за <b>{hours:g} ч</b>\n"
             f"Темп: <b>{c['pph']:.1f}</b> в час (норма {norm})\n"
-            f"Ступень: <code>{bar(c['tier'], c['tiers'])}</code> {c['rate']:.3f} zł/шт\n"
+            f"Ступень: <code>{bar(c['tier'], c['tiers'])}</code> "
+            + (f"{c['rate']:.2f} zł/ч\n" if st in HOURLY else f"{c['rate']:.3f} zł/шт\n") +
             f"Сверх нормы: <b>{c['above']}</b> шт из {c['norm']} по норме\n\n"
             f"💰 <b>{c['bonus']:.2f} zł</b> премии, если такой темп будет весь месяц.\n"
             "<i>Премия считается по среднему темпу за месяц, а не за смену.</i>")
@@ -567,6 +577,359 @@ def cmd_shift_who(m):
     send(m.chat.id, f"👷 <b>{day}</b>\n\n{body}")
 
 
+# ── админ: люди, их пики, личные сообщения ──────────────────
+RE_MONTH = re.compile(r"^\d{4}-\d{2}$")
+
+
+def send_long(chat_id, text, kb=None):
+    """Telegram режет сообщение на 4096 символах — делим по строкам."""
+    parts, cur = [], ""
+    for ln in text.split("\n"):
+        if len(cur) + len(ln) > 3800:
+            parts.append(cur)
+            cur = ""
+        cur += ln + "\n"
+    parts.append(cur)
+    for i, part in enumerate(parts):
+        send(chat_id, part.rstrip(), kb if i == len(parts) - 1 else None)
+
+
+def user_line(u):
+    tag = f"@{esc(u['username'])} " if u.get("username") else ""
+    team = f" · {esc(u['team'].upper())} {esc(u.get('grp') or '')}" if u.get("team") else ""
+    off = "" if u.get("active") else " 🔴"
+    return f"{esc(u.get('name') or '—')} {tag}<code>{esc(u['uid'])}</code>{team}{off}"
+
+
+def find_users(q):
+    """Поиск по имени, @нику или куску ID. Пустой запрос — все, новые сверху."""
+    users = sorted(STORE.users(), key=lambda u: str(u.get("started_at") or ""), reverse=True)
+    q = (q or "").strip().lstrip("@").lower()
+    if not q:
+        return users
+    return [u for u in users if q in str(u.get("name") or "").lower() or q in str(u.get("username") or "").lower()
+            or q in str(u["uid"])]
+
+
+def person_kb(uid, month=None):
+    kb = InlineKeyboardMarkup()
+    row = [InlineKeyboardButton("📦 Пики", callback_data=f"ap_{uid}"), InlineKeyboardButton("✉️ Написать", callback_data=f"am_{uid}")]
+    if month:
+        y, mo = map(int, month.split("-"))
+        prev = f"{y - 1}-12" if mo == 1 else f"{y}-{mo - 1:02d}"
+        row[0] = InlineKeyboardButton(f"◀️ {prev[5:]}.{prev[:4]}", callback_data=f"ap_{uid}_{prev}")
+    kb.add(*row)
+    return kb
+
+
+@bot.message_handler(commands=["users", "who"])
+def cmd_users(m):
+    """/users [имя | @ник | кусок ID] — люди из базы с их Telegram ID."""
+    if not admin_only(m) or not need_store(m):
+        return
+    q = m.text.partition(" ")[2]
+    try:
+        found = find_users(q)
+    except Exception:
+        return send(m.chat.id, "⚠️ База недоступна.")
+    if not found:
+        return send(m.chat.id, f"Никого не нашёл по «{esc(q)}». Список всех: /users")
+    shown = found[:50]
+    head = f"👥 <b>{'Найдено' if q.strip() else 'В базе'}: {len(found)}</b>" + (f", показаны первые 50 — уточни: <code>/users имя</code>" if len(found) > 50 else "")
+    body = "\n".join(user_line(u) for u in shown)
+    kb = None
+    if len(found) <= 6:
+        kb = InlineKeyboardMarkup()
+        for u in found:
+            nm = (u.get("name") or u["uid"])[:18]
+            kb.row(InlineKeyboardButton(f"📦 {nm}", callback_data=f"ap_{u['uid']}"), InlineKeyboardButton("✉️", callback_data=f"am_{u['uid']}"))
+    send_long(m.chat.id, f"{head}\n\n{body}\n\n<i>Нажми на ID, чтобы скопировать. Пики: /peaks ID, написать: /msg ID текст</i>", kb)
+
+
+def peaks_text(uid, month):
+    u = get_user(uid) or {}
+    rows = [r for r in STORE.peaks(uid, month) if not r.get("deleted")]
+    lb = STORE.month_row("leaderboard", uid, month, "bonus,shifts,updated_at")
+    ind = STORE.month_row("indirect", uid, month, "amount,hours")
+    head = f"📦 <b>{esc(u.get('name') or uid)}</b> <code>{uid}</code> — {month[5:]}.{month[:4]}"
+    if not rows:
+        return (f"{head}\n\nЗаписей пиков за этот месяц на сервере нет. Они приходят из трекера, "
+                "когда человек записывает или удаляет смену (старая версия приложения их не шлёт).")
+    P, H = sum(r["peaks"] for r in rows), sum(float(r["hours"]) for r in rows)
+    days = len({r["day"] for r in rows})
+    total = [f"Итого: <b>{days}</b> дн., <b>{P}</b> шт, <b>{H:g}</b> ч"]
+    if lb:
+        total.append(f"премия в рейтинге <b>{float(lb['bonus']):.2f} zł</b>")
+    if ind:
+        total.append(f"Indirect {float(ind['amount']):.2f} zł за {float(ind['hours']):g} ч")
+    by = {}
+    for r in rows:
+        a = by.setdefault(r["station"], [0, 0.0, 0])
+        a[0] += r["peaks"]; a[1] += float(r["hours"]); a[2] += 1
+    st_lines = []
+    for st, (p, h, n) in sorted(by.items(), key=lambda x: -x[1][0]):
+        if st in ST:
+            c = calc(st, p, h)
+            st_lines.append(f"<b>{ST[st][0]}</b> {esc(ST[st][1])}: {n} зап., {p} шт за {h:g} ч, темп <b>{c['pph']:.1f}</b> "
+                            f"(норма {ST[st][2]}) → {c['bonus']:.2f} zł")
+        else:
+            st_lines.append(f"<b>{esc(st.upper())}</b>: {n} зап., {p} шт за {h:g} ч")
+    lines = []
+    for i, r in enumerate(rows, 1):
+        st, h = r["station"], float(r["hours"])
+        name = ST[st][0] if st in ST else esc(st.upper())
+        pph = r["peaks"] / h if h else 0
+        mark = ("▲" if pph >= ST[st][2] else "▼") if st in ST else ""
+        span = f" {r['t_from']}–{r['t_to']}" if r.get("t_from") and r.get("t_to") else ""
+        added = f" · записал {esc(r['added'])}" if r.get("added") else ""
+        fixed = " ✏️" if r.get("admin_at") else ""
+        lines.append(f"<b>#{i}</b> <code>{SH.day_label(r['day'])}</code>{span} · <b>{name}</b> {r['peaks']} шт · {h:g} ч · {pph:.1f}/ч {mark}{added}{fixed}")
+    upd = (f"\n\n<i>Обновлено {ago(lb['updated_at'])}. ▲ — темп выше нормы, ✏️ — исправлено админом. "
+           "Премия по станциям — до обецности.</i>" if lb else "")
+    upd += ("\n\n<b>Исправить</b>: <code>/pfix 3 pa</code> — станция, <code>/pfix 3 950</code> — пики, "
+            "<code>/pfix 3 950 7.5</code> — пики и часы, <code>/pfix 3 del</code> — снять, <code>/pfix 3 back</code> — вернуть как было.")
+    return (f"{head}\n\n{', '.join(total)}\n\n<b>По станциям</b>\n" + "\n".join(st_lines)
+            + "\n\n<b>Записи</b>\n" + "\n".join(lines) + upd)
+
+
+def resolve_uid(chat_id, arg):
+    """ID как есть; имя или @ник — если найден ровно один человек."""
+    if arg.isdigit():
+        return arg
+    found = find_users(arg)
+    if len(found) == 1:
+        return str(found[0]["uid"])
+    if not found:
+        send(chat_id, f"Никого не нашёл по «{esc(arg)}». Список: /users")
+    else:
+        send_long(chat_id, f"По «{esc(arg)}» нашлось {len(found)} — укажи ID:\n\n" + "\n".join(user_line(u) for u in found[:30]))
+    return None
+
+
+@bot.message_handler(commands=["peaks"])
+def cmd_peaks(m):
+    """/peaks <id|имя> [YYYY-MM] — куда человек записал пики и сколько."""
+    if not admin_only(m) or not need_store(m):
+        return
+    p = m.text.split()
+    if len(p) < 2:
+        return send(m.chat.id, "Формат: <code>/peaks 123456789</code> или <code>/peaks 123456789 2026-10</code>. "
+                               "Можно имя вместо ID. ID людей: /users")
+    month = p[-1] if len(p) > 2 and RE_MONTH.match(p[-1]) else SH.today().strftime("%Y-%m")
+    who = " ".join(p[1:-1] if len(p) > 2 and RE_MONTH.match(p[-1]) else p[1:])
+    uid = resolve_uid(m.chat.id, who)
+    if not uid:
+        return
+    show_peaks(m.chat.id, uid, month, m.from_user.id)
+
+
+PK_CTX = {}                                  # админ → (uid, месяц) последнего /peaks, для /pfix без ID
+
+
+def show_peaks(chat_id, uid, month, admin=None):
+    if admin:
+        PK_CTX[admin] = (str(uid), month)
+    try:
+        text = peaks_text(uid, month)
+    except Exception as e:
+        return send(chat_id, f"⚠️ База недоступна: {esc(e)}")
+    send_long(chat_id, text, person_kb(uid, month))
+
+
+def r2(n):
+    """Как C.r2 в core.js: Math.round((n + EPSILON) * 100) / 100."""
+    return int((n + 2.220446049250313e-16) * 100 + 0.5) / 100
+
+
+def month_snapshot(rows):
+    """Как C.monthSnapshot: премия по станциям из суммарных пиков и часов месяца."""
+    by = {}
+    for r in rows:
+        a = by.setdefault(r["station"], [0, 0.0])
+        a[0] += int(r["peaks"]); a[1] += float(r["hours"])
+    bonus = sum(calc(st, p, h)["bonus"] for st, (p, h) in by.items() if st in ST)
+    peaks, hours = sum(int(r["peaks"]) for r in rows), sum(float(r["hours"]) for r in rows)
+    return dict(bonus=r2(bonus), peaks=peaks, hours=r2(hours), shifts=len({r["day"] for r in rows}),
+                ppc=r2(peaks / hours if hours else 0))
+
+
+def rerank(uid, month, before_rows):
+    """Пересчитать строку рейтинга после правки. Обецность — как прислал телефон
+    (или выводится из старой премии), Indirect — из своей таблицы."""
+    lb = STORE.month_row("leaderboard", uid, month, "bonus,pf")
+    if not lb:
+        return None
+    ind = STORE.month_row("indirect", uid, month, "amount")
+    indirect = float(ind["amount"]) if ind else 0.0
+    pf = lb.get("pf")
+    if pf is None:
+        old = month_snapshot(before_rows)["bonus"]
+        guess = (float(lb["bonus"]) - indirect) / old if old else 1.25
+        pf = min((0, 0.8, 1, 1.25), key=lambda x: abs(x - guess))
+    rows = [r for r in STORE.peaks(uid, month) if not r.get("deleted")]
+    s = month_snapshot(rows)
+    bonus = r2(s["bonus"] * float(pf) + indirect)
+    STORE.patch_leaderboard(uid, month, {"bonus": bonus, "peaks": s["peaks"], "hours": round(s["hours"], 1), "shifts": s["shifts"],
+                                         "ppc": round(s["ppc"], 1), "updated_at": SH.now().isoformat()})
+    return float(lb["bonus"]), bonus
+
+
+def entry_text(r):
+    st = r["station"]
+    return f"{ST[st][0] if st in ST else esc(st.upper())} {r['peaks']} шт за {float(r['hours']):g} ч"
+
+
+def fix_values(was, args):
+    """Разобрать «pa», «950», «950 7.5», «7.5ч» → новые станция, пики, часы. Ошибка — строка."""
+    new, nums = dict(was), []
+    for a in args:
+        if a in ST:
+            new["station"] = a
+        elif re.fullmatch(r"\d+(?:[.,]\d+)?(?:ч|h)?", a):
+            nums.append(a)
+        else:
+            return f"Не понял «{esc(a)}». Станции: {', '.join(ST)}; числа — пики и часы, например <code>950 7.5</code>."
+    if len(nums) > 2:
+        return "Чисел максимум два: пики и часы."
+    for i, a in enumerate(nums):
+        v = float(a.rstrip("чh").replace(",", "."))
+        if a[-1] in "чh" or "." in a or "," in a or i == 1:
+            new["hours"] = v
+        else:
+            new["peaks"] = int(v)
+    if not (0 < new["peaks"] <= 100000 and 0 < new["hours"] <= 16):
+        return "Пики — от 1 до 100 000, часы — больше 0 и не больше 16."
+    return new
+
+
+@bot.message_handler(commands=["pfix"])
+def cmd_pfix(m):
+    """/pfix [id] <№> <станция | пики [часы] | del | back> [тихо] — исправить запись пиков.
+    Номер — из последнего /peaks. Меняется сервер: рейтинг сразу, телефон человека — при открытии трекера."""
+    if not admin_only(m) or not need_store(m):
+        return
+    p = m.text.split()[1:]
+    ctx = PK_CTX.get(m.from_user.id)
+    if len(p) >= 2 and p[0].isdigit() and len(p[0]) >= 5 and p[1].isdigit():
+        uid = p.pop(0)
+        month = ctx[1] if ctx and ctx[0] == uid else SH.today().strftime("%Y-%m")
+    elif ctx:
+        uid, month = ctx
+    else:
+        return send(m.chat.id, "Сначала открой записи: <code>/peaks ID</code>, потом <code>/pfix 3 pa</code>. "
+                               "Или сразу: <code>/pfix ID 3 pa</code> (текущий месяц).")
+    if len(p) < 2 or not p[0].isdigit():
+        return send(m.chat.id, "Формат: <code>/pfix 3 pa</code> · <code>/pfix 3 950</code> · <code>/pfix 3 950 7.5</code> · "
+                               "<code>/pfix 3 del</code> · <code>/pfix 3 back</code>. Добавь <code>тихо</code> — человеку не писать.\n"
+                               "Номер записи — из /peaks. Станции: " + ", ".join(ST))
+    n, args = int(p[0]), [a.lower() for a in p[1:]]
+    quiet = bool({"тихо", "quiet", "-q"} & set(args))
+    args = [a for a in args if a not in ("тихо", "quiet", "-q")]
+    try:
+        before = STORE.peaks(uid, month)
+    except Exception as e:
+        return send(m.chat.id, f"⚠️ База недоступна: {esc(e)}")
+    live = [r for r in before if not r.get("deleted")]
+    if not 1 <= n <= len(live):
+        return send(m.chat.id, f"Записи #{n} нет: за {month[5:]}.{month[:4]} у <code>{uid}</code> записей {len(live)}. "
+                               f"Список: <code>/peaks {uid} {month}</code>")
+    r = live[n - 1]
+    was = {"station": r["station"], "peaks": int(r["peaks"]), "hours": float(r["hours"])}
+    now = SH.now().isoformat()
+    patch = {"admin_at": now, "updated_at": now}
+    if not r.get("orig"):
+        patch["orig"] = was
+    if args and args[0] in ("del", "удалить", "снять"):
+        patch["deleted"] = True
+        what = f"снята запись {entry_text(r)}"
+    elif args and args[0] in ("back", "вернуть"):
+        o = r.get("orig") or was
+        new = {"station": o["station"], "peaks": int(o["peaks"]), "hours": float(o["hours"])}
+        patch.update(new, deleted=False)
+        what = f"{entry_text(r)} → {entry_text({**r, **new})} (как было)"
+    else:
+        new = fix_values(was, args)
+        if isinstance(new, str):
+            return send(m.chat.id, new)
+        if new == was:
+            return send(m.chat.id, "Ничего не поменялось.")
+        patch.update(new)
+        what = f"{entry_text(r)} → {entry_text({**r, **new})}"
+    try:
+        STORE.patch_peak(uid, r["id"], patch)
+        rk = rerank(uid, month, live)
+    except Exception as e:
+        return send(m.chat.id, f"⚠️ Не записалось: {esc(e)}")
+    day = SH.day_label(r["day"])
+    rank = f"\nПремия в рейтинге: {rk[0]:.2f} → <b>{rk[1]:.2f} zł</b>" if rk else "\nВ рейтинге его за этот месяц нет."
+    told = ""
+    if not quiet:
+        try:
+            bot.send_message(int(uid), f"✏️ <b>Администратор исправил запись пиков</b>\n\n{day}: {what}.\n\n"
+                                       "Рейтинг уже обновлён, в трекере изменится, когда откроешь его.",
+                             reply_markup=back_kb(app_btn("📱 Открыть трекер", "peaks")))
+            told = "\nЧеловеку отправлено уведомление."
+        except ApiTelegramException as e:
+            if gone(e):
+                set_inactive(uid)
+            told = "\n⚠️ Уведомление не дошло."
+    send(m.chat.id, f"✅ <code>{uid}</code>, {day}: {what}.{rank}{told}\n\n"
+                    "<i>На телефоне человека запись поменяется, когда он откроет трекер.</i>", person_kb(uid))
+
+
+@bot.message_handler(commands=["msg"])
+def cmd_msg(m):
+    """/msg <id|имя> [текст] — личное сообщение человеку от бота, с предпросмотром."""
+    if not admin_only(m) or not need_store(m):
+        return
+    p = m.text.split(maxsplit=2)
+    if len(p) < 2:
+        return send(m.chat.id, "Формат: <code>/msg 123456789 текст</code>. Без текста — бот спросит его следующим сообщением. "
+                               "Можно HTML: &lt;b&gt;, &lt;i&gt;. ID людей: /users")
+    uid = resolve_uid(m.chat.id, p[1])
+    if not uid:
+        return
+    if len(p) < 3 or not p[2].strip():
+        return ask_msg(m.chat.id, m.from_user.id, uid)
+    confirm_msg(m.chat.id, m.from_user.id, uid, p[2].strip())
+
+
+def ask_msg(chat_id, admin, uid):
+    u = get_user(uid)
+    if not u:
+        return send(chat_id, f"<code>{esc(uid)}</code> нет в базе — человек ещё не нажимал /start и не открывал трекер.")
+    STATE[admin] = ("msg_wait", uid)
+    send(chat_id, f"✉️ Напиши текст для <b>{esc(u.get('name') or uid)}</b> <code>{uid}</code> следующим сообщением.",
+         back_kb())
+
+
+def confirm_msg(chat_id, admin, uid, text):
+    u = get_user(uid)
+    if not u:
+        return send(chat_id, f"<code>{esc(uid)}</code> нет в базе — человек ещё не нажимал /start и не открывал трекер.")
+    try:
+        send(chat_id, "Предпросмотр:")
+        send(chat_id, text)
+    except ApiTelegramException as e:
+        return send(chat_id, f"⚠️ Текст не принят Telegram: <code>{esc(e.description)}</code>")
+    STATE[admin] = ("msg", uid, text)
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("✉️ Отправить", callback_data="am_go"), InlineKeyboardButton("Отмена", callback_data="menu"))
+    warn = "" if u.get("active") else "\n⚠️ Он блокировал бота — может не дойти."
+    send(chat_id, f"Отправить это <b>{esc(u.get('name') or uid)}</b> <code>{uid}</code>?{warn}", kb)
+
+
+def run_msg(chat_id, uid, text):
+    try:
+        bot.send_message(int(uid), text, disable_web_page_preview=True)
+        send(chat_id, f"✅ Доставлено <code>{uid}</code>.")
+    except ApiTelegramException as e:
+        if gone(e):
+            set_inactive(uid)
+            return send(chat_id, f"❌ Не дошло: <code>{uid}</code> заблокировал бота или удалил аккаунт.")
+        send(chat_id, f"❌ Не дошло: <code>{esc(e.description)}</code>")
+
+
 # ── админ: оповещения ────────────────────────────────────────
 KIND_RU = {"h2": "за 2 ч", "h1": "за час", "peaks": "записать пики", "pay": "10-е, кошелёк"}
 ADMIN_HELP = (
@@ -581,6 +944,12 @@ ADMIN_HELP = (
     "/npause, /nresume — остановить и вернуть рассылку (до перезапуска бота)\n"
     "/rebuild [id|all] — пересобрать графики из schedule.json\n"
     "/check — принимает ли сервер подпись бота (подтверждение аккаунтов)\n\n"
+    "<b>Люди</b>\n"
+    "/users [имя|@ник] — кто в базе и их Telegram ID\n"
+    "/peaks &lt;id|имя&gt; [ГГГГ-ММ] — куда человек записал пики, сколько и какой темп\n"
+    "/pfix &lt;№&gt; &lt;станция|пики [часы]|del|back&gt; [тихо] — исправить запись из /peaks: рейтинг сразу, телефон — при открытии\n"
+    "/msg &lt;id|имя&gt; [текст] — личное сообщение от бота, с предпросмотром\n"
+    "Перешли боту сообщение человека — бот пришлёт его ID (если тот не скрыл пересылку)\n\n"
     "<b>Прочее</b>\n"
     "/stats, /broadcast текст, /shift_add, /shift_del, /shift_who, /id"
 )
@@ -979,6 +1348,20 @@ def handle_cb(c, uid, d):
             edit(c, "📣 Отправка запущена.")
             threading.Thread(target=run_nsend, args=(chat, st[1], st[2]), daemon=True).start()
         return
+    if d.startswith("ap_") and is_admin(uid) and STORE.ok():
+        parts = d.split("_")
+        if parts[1].isdigit():
+            month = parts[2] if len(parts) > 2 and RE_MONTH.match(parts[2]) else SH.today().strftime("%Y-%m")
+            return show_peaks(chat, parts[1], month, uid)
+        return
+    if d.startswith("am_") and d[3:].isdigit() and is_admin(uid) and STORE.ok():
+        return ask_msg(chat, uid, d[3:])
+    if d == "am_go" and is_admin(uid):
+        st = STATE.pop(uid, None)
+        if st and st[0] == "msg":
+            edit(c, "✉️ Отправляю…")
+            run_msg(chat, st[1], st[2])
+        return
     if d == "bc_go" and is_admin(uid):
         st = STATE.pop(uid, None)
         if st and st[0] == "bc":
@@ -989,6 +1372,15 @@ def handle_cb(c, uid, d):
 @bot.message_handler(content_types=["text"])
 def on_text(m):
     st = STATE.get(m.from_user.id)
+    if is_admin(m.from_user.id):
+        if st and st[0] == "msg_wait" and not (m.text or "").startswith("/"):
+            STATE.pop(m.from_user.id, None)
+            return confirm_msg(m.chat.id, m.from_user.id, st[1], m.text.strip())
+        fwd = getattr(m, "forward_from", None) or getattr(getattr(m, "forward_origin", None), "sender_user", None)
+        if fwd:
+            return send(m.chat.id, f"🆔 {esc(fwd.first_name)} — <code>{fwd.id}</code>", person_kb(fwd.id))
+        if getattr(m, "forward_sender_name", None) or getattr(getattr(m, "forward_origin", None), "sender_user_name", None):
+            return send(m.chat.id, "Человек скрыл аккаунт при пересылке — ID не виден. Найди его по имени: <code>/users имя</code>")
     if st and st[0] == "calc":
         nums = re.findall(r"\d+(?:[.,]\d+)?", m.text or "")
         try:
@@ -1117,7 +1509,8 @@ def setup():
                       BotCommand("nplan", "Что уйдёт в ближайшие сутки"), BotCommand("nlog", "Журнал отправок"),
                       BotCommand("nsend", "Сообщение смене / группе"), BotCommand("ntest", "Тест оповещений себе"),
                       BotCommand("npause", "Пауза рассылки"), BotCommand("nresume", "Вернуть рассылку"),
-                      BotCommand("nuser", "Профиль человека"), BotCommand("rebuild", "Пересобрать графики"),
+                      BotCommand("users", "Люди и их ID"), BotCommand("peaks", "Пики человека"),
+                      BotCommand("pfix", "Исправить запись пиков"), BotCommand("msg", "Написать человеку"), BotCommand("nuser", "Профиль человека"), BotCommand("rebuild", "Пересобрать графики"),
                       BotCommand("check", "Проверка подтверждения аккаунтов"), BotCommand("stats", "Статистика"), BotCommand("broadcast", "Рассылка всем")]
         for aid in ADMIN_IDS:
             try:

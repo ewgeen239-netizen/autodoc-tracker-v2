@@ -179,6 +179,7 @@ Deno.serve(async (req) => {
         const shifts = Math.round(num(r.shifts, 0, 31));
         const bonus = num(r.bonus, 0, 20_000);
         const ppc = hours > 0 ? peaks / hours : 0;
+        const pf = [0, 0.8, 1, 1.25].includes(Number(r.pf)) ? Number(r.pf) : null;   // обецность, для пересчёта в боте
         // Премия в рейтинге = пики × обецность + Indirect. Indirect берём из своей
         // таблицы (его пишет action indirect), а не со слов клиента.
         let indirect = 0;
@@ -199,9 +200,41 @@ Deno.serve(async (req) => {
           grp: /^[A-F]$/.test(String(r.group ?? "")) ? String(r.group) : null,
           bonus: Math.round(bonus * 100) / 100, peaks, hours: Math.round(hours * 10) / 10, shifts,
           ppc: Math.round(ppc * 10) / 10, updated_at: new Date().toISOString(),
+          ...(pf === null ? {} : { pf }),
         };
         const res = await db("leaderboard", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(row) });
         return res.ok ? json({ ok: true }) : json({ error: "db" }, 500);
+      }
+
+      case "peaks": {
+        // Записи пиков за месяц целиком: станция, день, время, пики, часы.
+        // Их видит админ в боте (/peaks) и может исправить (/pfix). Набор месяца
+        // заменяется, но исправленные админом записи (admin_at) телефон не
+        // перетирает: они уходят в ответе как fixes, и приложение берёт их себе.
+        const month = String(body.month ?? "");
+        if (!monthOk(month)) return json({ error: "bad month" }, 400);
+        const hm = (v: unknown) => /^\d{2}:\d{2}$/.test(String(v ?? "")) ? String(v) : null;
+        const rows = (Array.isArray(body.entries) ? body.entries : []).slice(0, 300).map(x => {
+          const e = (x ?? {}) as Record<string, unknown>;
+          const day = String(e.day ?? ""), peaks = Math.round(Number(e.peaks)), hours = Number(e.hours);
+          if (!/^[a-z]{1,5}$/.test(String(e.station ?? "")) || day.slice(0, 7) !== month || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+          if (!(peaks > 0 && peaks <= 100_000 && hours > 0 && hours <= 16) || !Number.isSafeInteger(Number(e.id))) return null;
+          return { uid, month, id: Number(e.id), day, station: String(e.station), peaks, hours: Math.round(hours * 100) / 100,
+            t_from: hm(e.from), t_to: hm(e.to), added: clean(e.added, 5) || null, updated_at: new Date().toISOString() };
+        }).filter(Boolean) as { id: number }[];
+        const fr = await db(`peaks?uid=eq.${uid}&month=eq.${month}&admin_at=not.is.null&select=id,day,station,peaks,hours,t_from,t_to,deleted`);
+        if (!fr.ok) return json({ error: "db" }, 500);
+        const fixed = (await fr.json()) as { id: number; day: string; station: string; peaks: number; hours: number; t_from: string | null; t_to: string | null; deleted: boolean }[];
+        const fixes = fixed.map(f => ({ id: Number(f.id), day: f.day, station: f.station, peaks: Number(f.peaks), hours: Number(f.hours),
+          from: f.t_from, to: f.t_to, deleted: !!f.deleted }));
+        const own = rows.filter(r => !fixes.some(f => f.id === r.id));
+        const d = await db(`peaks?uid=eq.${uid}&month=eq.${month}&admin_at=is.null`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+        if (!d.ok) return json({ error: "db" }, 500);
+        if (own.length) {
+          const res = await db("peaks", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(own) });
+          if (!res.ok) return json({ error: "db" }, 500);
+        }
+        return json({ ok: true, n: own.length, fixes });
       }
 
       case "consent": {

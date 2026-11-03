@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261103.1708';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261103.1851';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -240,12 +240,40 @@ let _rankT = null;
 function pushRank() {
   if (!STATE.verified) return;
   clearTimeout(_rankT);
-  _rankT = setTimeout(() => {
-    const m = C.monthKey(new Date()), s = C.monthSnapshot(DB.entries, m);
+  _rankT = setTimeout(async () => {
+    const m = C.monthKey(new Date());
+    // записи пиков месяца — админ смотрит их в боте (/peaks) и может исправить:
+    // исправления приходят в ответе и заменяют свои записи на телефоне
+    const entries = DB.entries.filter(e => e.shiftDate.slice(0, 7) === m)
+      .map(e => ({ id: e.id, station: e.station, day: e.shiftDate, peaks: e.peaks, hours: e.hours, from: e.from, to: e.to, added: e.addedAt }));
+    const r = await api('peaks', { month: m, entries }).catch(() => null);
+    if (r && Array.isArray(r.fixes) && applyFixes(r.fixes)) {
+      save(); renderAll();
+      toast(T('Администратор исправил твои записи пиков', 'Administrator poprawił twoje wpisy pików'));
+    }
+    const s = C.monthSnapshot(DB.entries, m);
     // В рейтинг — вся премия, как на главной: пики × обецность + Indirect
-    const indirect = indAmount(m), bonus = C.r2(s.bonus * C.premiumFactor(autoHours(m).absences) + indirect);
-    api('rank', { row: { month: m, name: DB.name || T('Аноним', 'Anonim'), emoji: DB.emoji, team: DB.team, group: DB.group, bonus, indirect, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
+    const indirect = indAmount(m), pf = C.premiumFactor(autoHours(m).absences), bonus = C.r2(s.bonus * pf + indirect);
+    api('rank', { row: { month: m, name: DB.name || T('Аноним', 'Anonim'), emoji: DB.emoji, team: DB.team, group: DB.group, bonus, indirect, pf, peaks: s.peaks, hours: s.hours, shifts: s.shifts, ppc: s.ppc } }).catch(() => {});
   }, 1500);
+}
+
+// Исправления админа: та же запись по id с новыми станцией, пиками и часами,
+// или снятие записи. Возвращает, сколько записей поменялось.
+function applyFixes(fixes) {
+  let n = 0;
+  for (const f of fixes) {
+    const i = DB.entries.findIndex(e => e.id === f.id);
+    if (f.deleted) { if (i >= 0) { DB.entries.splice(i, 1); n++; } continue; }
+    if (!C.ST[f.station] || !RE_DAY.test(f.day) || !(f.peaks > 0) || !(f.hours > 0 && f.hours <= 24)) continue;
+    const cur = i >= 0 ? DB.entries[i] : null;
+    if (cur && cur.station === f.station && cur.peaks === f.peaks && cur.hours === f.hours && cur.shiftDate === f.day) continue;
+    const next = { id: f.id, station: f.station, shiftDate: f.day, peaks: Math.round(f.peaks), hours: f.hours,
+      from: RE_HM.test(f.from) ? f.from : cur?.from || '', to: RE_HM.test(f.to) ? f.to : cur?.to || '', addedAt: cur?.addedAt || '' };
+    if (cur) DB.entries[i] = next; else DB.entries.push(next);
+    n++;
+  }
+  return n;
 }
 let _profT = null;
 function pushProfile() {

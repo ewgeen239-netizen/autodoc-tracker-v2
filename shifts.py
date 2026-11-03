@@ -285,9 +285,28 @@ class Store:
         return rows[0] if rows else None
 
     def users(self, **flt):
-        p = {"select": "uid,name,active,team,grp,notify,off,rebuild", "limit": "5000"}
+        p = {"select": "uid,name,username,active,team,grp,notify,off,rebuild,started_at", "limit": "5000"}
         p.update(flt)
         return self._get("bot_users", p)
+
+    # ── записи пиков и итоги месяца (пишет Edge Function, читает админ) ──
+    def peaks(self, uid, month):
+        return self._get("peaks", {"uid": f"eq.{uid}", "month": f"eq.{month}", "select": "*",
+                                   "order": "day.asc,t_from.asc", "limit": "500"})
+
+    def patch_peak(self, uid, pid, patch):
+        r = self.s.patch(f"{self.url}/rest/v1/peaks", params={"uid": f"eq.{uid}", "id": f"eq.{pid}"}, json=patch,
+                         headers=self._h(True, "return=minimal"), timeout=self.timeout)
+        r.raise_for_status()
+
+    def patch_leaderboard(self, uid, month, patch):
+        r = self.s.patch(f"{self.url}/rest/v1/leaderboard", params={"uid": f"eq.{uid}", "month": f"eq.{month}"}, json=patch,
+                         headers=self._h(True, "return=minimal"), timeout=self.timeout)
+        r.raise_for_status()
+
+    def month_row(self, table, uid, month, select="*"):
+        rows = self._get(table, {"uid": f"eq.{uid}", "month": f"eq.{month}", "select": select, "limit": "1"})
+        return rows[0] if rows else None
 
     def mark_all_rebuild(self):
         r = self.s.patch(f"{self.url}/rest/v1/bot_users", params={"team": "not.is.null"}, json={"rebuild": True},

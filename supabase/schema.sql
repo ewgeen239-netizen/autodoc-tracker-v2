@@ -8,7 +8,8 @@
 --                                  после проверки подписи Telegram;
 --    bot_users, shifts,
 --    notify_log, ics_tokens      — бот и Edge Function (service_role);
---    paydays, indirect           — только Edge Function (даты зарплаты, Indirect).
+--    paydays, indirect, peaks    — только Edge Function (даты зарплаты, Indirect,
+--                                  записи пиков; пики читает бот для админа).
 --  Анон-ключ (он публичный, лежит в Mini App) может только читать
 --  рейтинг, и то без Telegram ID.
 -- ═══════════════════════════════════════════════════════════════════
@@ -147,6 +148,33 @@ create table if not exists public.indirect (
 create index if not exists indirect_month_idx on public.indirect (month);
 alter table public.indirect enable row level security;
 
+
+-- 9. ЗАПИСИ ПИКОВ ────────────────────────────────────────────────────
+-- Каждая записанная смена: станция, день, время, пики, часы. Приложение
+-- присылает весь текущий месяц целиком. Читает админ в боте (/peaks).
+create table if not exists public.peaks (
+  uid        text        not null,
+  month      text        not null,              -- 'YYYY-MM'
+  id         bigint      not null,              -- id записи в приложении
+  day        date        not null,              -- день смены
+  station    text        not null,              -- os, pa, zk …
+  peaks      integer     not null,
+  hours      numeric     not null,
+  t_from     text,
+  t_to       text,
+  added      text,                              -- во сколько записал, HH:MM
+  updated_at timestamptz default now(),
+  primary key (uid, id)
+);
+create index if not exists peaks_uid_month_idx on public.peaks (uid, month);
+-- Исправления админа (/pfix в боте): такие записи телефон не перетирает,
+-- а забирает себе. deleted — запись снята, orig — что было до правки.
+alter table public.peaks add column if not exists admin_at timestamptz;
+alter table public.peaks add column if not exists deleted  boolean default false;
+alter table public.peaks add column if not exists orig     jsonb;
+-- обецность месяца (×1,25 / ×0,8 / ×0) — бот пересчитывает рейтинг после правки
+alter table public.leaderboard add column if not exists pf numeric;
+alter table public.peaks enable row level security;
 
 -- 6b. Смена в рейтинге для тех, кто уже выбрал её в боте или приложении
 update public.leaderboard l set team = b.team, grp = b.grp
