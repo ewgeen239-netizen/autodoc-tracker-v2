@@ -170,6 +170,12 @@ t('график из schedule.json', () => {
   assert.deepEqual(o.days[1], { from: '14:00', to: '22:00' });
   assert.deepEqual(o.days[7], { from: '06:00', to: '14:00' });
   assert.equal(C.monthPlan(sched, 'green', 'A', '2026-10'), null);
+  const g = C.monthPlan(sched, 'green', 'D', '2026-11');
+  assert.equal(Object.keys(g.days).length, 20);
+  assert.deepEqual(g.days[9], { from: '06:00', to: '14:00' });
+  assert.deepEqual(g.days[30], { from: '14:00', to: '22:00' });
+  assert.equal(g.days[11], undefined);
+  assert.equal(g.holidays[11], 'Święto Niepodległości');
 });
 
 t('дополнительные станции: PI, OP, HR по штукам, ZK — за час', () => {

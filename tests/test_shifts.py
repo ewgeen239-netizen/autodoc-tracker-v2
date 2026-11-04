@@ -37,6 +37,18 @@ class Schedule(unittest.TestCase):
     def test_green_empty(self):
         self.assertEqual(SH.gen_shifts(SCHED, 1, "green", "A", "2026-10"), [])
 
+    def test_green_november(self):
+        a = {r["day"]: r["starts"] for r in SH.gen_shifts(SCHED, 1, "green", "A", "2026-11")}
+        f = {r["day"]: r["starts"] for r in SH.gen_shifts(SCHED, 1, "green", "F", "2026-11")}
+        self.assertEqual((len(a), len(f)), (20, 20))
+        self.assertEqual(a["2026-11-07"], "14:00:00")
+        self.assertNotIn("2026-11-09", a)
+        self.assertEqual(f["2026-11-09"], "06:00:00")
+        self.assertNotIn("2026-11-11", a)
+        self.assertNotIn("2026-11-11", f)
+        self.assertNotIn("2026-11-30", a)
+        self.assertEqual(f["2026-11-30"], "14:00:00")
+
     def test_night_shift_hours(self):
         self.assertEqual(SH.hours(ROW), 8)
 
