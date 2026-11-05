@@ -111,17 +111,18 @@
     return { st, en };
   }
 
-  // Дата в форме — дата НАЧАЛА смены. Утреннюю дату ночной смены сдвигаем назад.
-  function shiftDayOf(dayISO, from, to, now = new Date()) {
-    if (!dayISO) return dayISO;
+  // День смены по её началу: последний раз, когда часы показывали `from`, не позже now
+  // (back=1 — смена сутками раньше). Конец смены не важен: запись посреди смены
+  // или за минуту до её конца остаётся на дне начала, а не уезжает на день назад.
+  function startedShiftDay(from, now = new Date(), back = 0) {
     const a = hmMin(from);
-    if (a !== null && a < SHIFT_CUT_H * 60) dayISO = addDays(dayISO, -1);
-    const b = shiftBounds(dayISO, from, to);
-    if (b && b.en > now) {
-      const prev = shiftBounds(addDays(dayISO, -1), from, to);
-      if (prev && prev.en <= now) dayISO = addDays(dayISO, -1);
+    const s = new Date(now);
+    if (a !== null) {
+      s.setHours(Math.floor(a / 60), a % 60, 0, 0);
+      if (s > now) s.setDate(s.getDate() - 1);
     }
-    return dayISO;
+    s.setDate(s.getDate() - back);
+    return shiftDayFrom(s);
   }
 
   function minutesBetween(from, to) {
@@ -512,7 +513,7 @@
     ST, r2, rateFor, calc, monthAgg, monthBonus, monthSnapshot,
     slipCheck, isWorkday, payDeadline, payday, setLang,
     iso, monthKey, addDays, addMonths, hmMin, daysInMonth,
-    SHIFT_CUT_H, shiftDayFrom, shiftToday, shiftYest, shiftBounds, shiftDayOf, minutesBetween, nightMinutes,
+    SHIFT_CUT_H, shiftDayFrom, shiftToday, shiftYest, shiftBounds, startedShiftDay, minutesBetween, nightMinutes,
     parseSpan, monthPlan, easter, plHolidays, nominalHours,
     TAX, minWage, salary, ATTENDANCE, premiumFactor, urlopAverage, variableOf, urlopWindow, youngStatus, PAY_DAY, walletMonth, walletUntil, daysLeft,
   };

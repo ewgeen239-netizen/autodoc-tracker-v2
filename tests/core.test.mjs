@@ -140,9 +140,21 @@ t('кошелёк: до 10-го прошлый месяц, с 10-го — тек
 
 t('смена-день: ночная смена — день начала', () => {
   const now = new Date(2026, 9, 1, 7, 0);
-  assert.equal(C.shiftDayOf('2026-10-01', '22:00', '06:00', now), '2026-09-30');
-  assert.equal(C.shiftDayOf('2026-10-01', '00:00', '06:00', now), '2026-09-30');
-  assert.equal(C.shiftDayOf('2026-10-01', '06:00', '14:00', new Date(2026, 9, 1, 15)), '2026-10-01');
+  const at = (d, h, m = 0) => new Date(2026, 9, d, h, m);
+  // ночная 22–06: записал утром, днём, посреди смены, после полуночи
+  assert.equal(C.startedShiftDay('22:00', at(2, 6, 5)), '2026-10-01');
+  assert.equal(C.startedShiftDay('22:00', at(2, 14)), '2026-10-01');
+  assert.equal(C.startedShiftDay('22:00', at(2, 23)), '2026-10-02');
+  assert.equal(C.startedShiftDay('22:00', at(3, 3)), '2026-10-02');
+  assert.equal(C.startedShiftDay('22:00', at(2, 14), 1), '2026-09-30');
+  // 00:00–06:00 — та же ночь, учётные сутки с 06:00
+  assert.equal(C.startedShiftDay('00:00', at(2, 7)), '2026-10-01');
+  // дневная 06–14: за 10 минут до конца — тот же день (раньше уезжало на вчера)
+  assert.equal(C.startedShiftDay('06:00', at(1, 13, 50)), '2026-10-01');
+  assert.equal(C.startedShiftDay('06:00', at(1, 15)), '2026-10-01');
+  assert.equal(C.startedShiftDay('06:00', at(1, 5, 50)), '2026-09-30');
+  assert.equal(C.startedShiftDay('14:00', at(1, 21, 55)), '2026-10-01');
+  assert.equal(C.startedShiftDay('', at(1, 3)), '2026-09-30');
   assert.equal(C.shiftToday(new Date(2026, 9, 1, 2)), '2026-09-30');
   assert.equal(C.minutesBetween('22:00', '06:00'), 480);
   assert.equal(C.nightMinutes('22:00', '06:00'), 480);

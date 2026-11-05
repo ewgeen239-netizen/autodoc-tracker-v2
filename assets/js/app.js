@@ -6,7 +6,7 @@
 'use strict';
 
 const C = window.Core, CFG = window.APP_CONFIG;
-const APP_VERSION = '20261103.1851';                                  // ставит tools/bump_version.py
+const APP_VERSION = '20261105.1643';                                  // ставит tools/bump_version.py
 // Скрипт Telegram создаёт WebApp и в обычном браузере — тогда это пустышка
 // версии 6.0. Работаем с ним только внутри Telegram, где есть подписанный initData.
 const TG_RAW = window.Telegram && window.Telegram.WebApp;
@@ -666,8 +666,43 @@ async function homeRank() {
 // Состояние формы живёт здесь, а не в DOM: форма перерисовывается при каждом
 // входе на вкладку и возврате в приложение, и введённое не должно теряться.
 // f/o/p === null — поле не трогали, берём из графика.
-const qa = { mode: 'today', day: '', base: '', f: null, o: null, p: '' };
-const qaReset = () => { qa.f = qa.o = null; qa.p = ''; };
+// ok — ключ записи, которую уже подтвердили вторым нажатием, несмотря на предупреждения.
+const qa = { mode: 'today', day: '', f: null, o: null, p: '', ok: '' };
+const qaReset = () => { qa.f = qa.o = null; qa.p = ''; qa.ok = ''; };
+const spanOf = day => { const p = plan(day.slice(0, 7)); return (p && p.days[+day.slice(8)]) || null; };
+// «Сегодняшняя» — последняя смена с таким началом, которая уже началась; «Вчерашняя» — сутками раньше.
+const qaAuto = f => C.startedShiftDay(f, new Date(), qa.mode === 'yesterday' ? 1 : 0);
+function qaPick() {
+  if (qa.mode === 'custom') { const s = spanOf(qa.day); return { day: qa.day, f: qa.f ?? (s ? s.from : ''), o: qa.o ?? (s ? s.to : '') }; }
+  let day = qaAuto(qa.f), s = spanOf(day);
+  if (qa.f == null) {                       // время из графика: сначала сегодня, иначе вчера
+    s = s || spanOf(C.addDays(day, -1));
+    if (s) { day = qaAuto(s.from); s = spanOf(day) || s; }
+  }
+  return { day, f: qa.f ?? (s ? s.from : ''), o: qa.o ?? (s ? s.to : '') };
+}
+
+// Сверка с реальным днём: смена не в будущем, рабочий день по графику, не дубль.
+// block — сохранять нельзя, warn — можно, но только вторым нажатием.
+function qaCheck(day, f, o, now = new Date()) {
+  const b = RE_DAY.test(day) && C.shiftBounds(day, f, o);
+  if (!b) return null;
+  const end = C.iso(b.en);
+  const when = end === day ? `${dayName(day)}, ${f}–${o}` : `${dayName(day)} ${f} → ${dayName(end)} ${o}`;
+  if (b.st > now) return { when, block: T('Эта смена ещё не началась. Проверь дату', 'Ta zmiana jeszcze się nie zaczęła. Sprawdź datę'), warn: [] };
+  const warn = [], mk = day.slice(0, 7), d = +day.slice(8), s = spanOf(day), alt = [];
+  if (DB.urlop[mk]?.[d]) warn.push(T('В графике на этот день отпуск', 'W grafiku na ten dzień jest urlop'));
+  else if (DB.absent[mk]?.[d]) warn.push(T('В графике на этот день пропуск', 'W grafiku na ten dzień jest nieobecność'));
+  else if (plan(mk) && !s && !DB.ovt.some(x => x.date === day)) {
+    warn.push(T('По графику это выходной', 'Według grafiku to dzień wolny'));
+    [-1, 1].forEach(n => { const x = C.addDays(day, n), sx = spanOf(x); if (sx && sx.from === f && C.shiftBounds(x, f, o).st <= now) alt.push(x); });
+  } else if (s && s.from !== f) warn.push(T(`По графику смена ${s.from}–${s.to}`, `Według grafiku zmiana ${s.from}–${s.to}`));
+  const dup = DB.entries.find(e => e.shiftDate === day && (e.from && e.to
+    ? (x => x.st < b.en && x.en > b.st)(C.shiftBounds(day, e.from, e.to)) : e.station === STATE.curSt));
+  if (dup) warn.push(T(`Уже записано: ${C.ST[dup.station].name} ${int(dup.peaks)} шт${dup.from ? `, ${dup.from}–${dup.to}` : ''}`,
+    `Już zapisano: ${C.ST[dup.station].name} ${int(dup.peaks)} szt.${dup.from ? `, ${dup.from}–${dup.to}` : ''}`));
+  return { when, block: '', warn, alt };
+}
 // Ставка ступени: у почасовых станций — zł за час, у остальных — zł за штуку.
 const rateTxt = (st, r) => C.ST[st].hourly ? `${money(r)} ${T('zł/ч', 'zł/h')}` : `${r.toFixed(3).replace('.', ',')} zł`;
 const stKeys = extra => extra ? Object.keys(C.ST).filter(k => !DB.mainSt.includes(k)) : DB.mainSt;
@@ -716,24 +751,19 @@ function renderPeaks() {
 
 function renderForm() {
   const st = STATE.curSt;
-  // base — дата до автосдвига ночной смены; сдвиг всегда считаем от неё,
-  // иначе каждая перерисовка и каждый ввод уводили бы дату ещё на день назад.
-  const day = qa.mode === 'yesterday' ? C.shiftYest() : qa.mode === 'today' ? C.shiftToday() : (qa.day || C.shiftToday());
-  qa.base = day;
-  if (qa.mode === 'custom') qa.day = day;
-  const p = plan(day.slice(0, 7)), span = p && p.days[+day.slice(8)];
-  const f = qa.f ?? (span ? span.from : ''), o = qa.o ?? (span ? span.to : '');
+  const { day, f, o } = qaPick();
   $('qa').innerHTML = `
     <div class="form-h">${T('Записать смену на', 'Zapisz zmianę na')} ${C.ST[st].name}</div>
     <div class="chips" style="margin-bottom:10px">
       <button class="chip${qa.mode === 'today' ? ' on' : ''}" data-act="qa-mode" data-v="today">${T('Сегодняшняя', 'Dzisiejsza')}</button>
       <button class="chip${qa.mode === 'yesterday' ? ' on' : ''}" data-act="qa-mode" data-v="yesterday">${T('Вчерашняя', 'Wczorajsza')}</button>
     </div>
-    <label class="field" style="margin-bottom:10px"><span>${T('Дата начала смены', 'Data początku zmiany')}</span><input class="in" type="date" id="qa-d" value="${day}" data-in="qa"></label>
+    <label class="field" style="margin-bottom:10px"><span>${T('Дата начала смены', 'Data początku zmiany')}</span><input class="in" type="date" id="qa-d" value="${day}" max="${C.iso(new Date())}" data-in="qa"></label>
     <div class="grid2">
       <label class="field"><span>${T('Начало', 'Początek')}</span><input class="in" type="time" id="qa-f" value="${f}" data-in="qa"></label>
       <label class="field"><span>${T('Конец', 'Koniec')}</span><input class="in" type="time" id="qa-o" value="${o}" data-in="qa"></label>
     </div>
+    <div class="qa-when" id="qa-when" aria-live="polite"></div>
     <div class="dur" id="qa-dur"></div>
     <label class="field"><span>${T('Пики, штук', 'Piki, sztuk')}</span><input class="in" type="number" inputmode="numeric" min="1" max="100000" id="qa-p" value="${esc(qa.p)}" placeholder="380" data-in="qa"></label>
     <div class="preview" id="qa-prev" hidden></div>
@@ -744,11 +774,15 @@ function renderForm() {
 function qaUpdate(ev) {
   const f = $('qa-f').value, o = $('qa-o').value, d = $('qa-d');
   const id = ev && ev.target.id;
-  if (id === 'qa-d') { qa.mode = 'custom'; qa.day = qa.base = d.value; document.querySelectorAll('[data-act="qa-mode"]').forEach(b => b.classList.remove('on')); }
+  if (ev && qa.ok) { qa.ok = ''; const btn = $('qa-save'); btn.textContent = T('Сохранить смену', 'Zapisz zmianę'); btn.classList.remove('warn'); }
+  if (id === 'qa-d') { qa.mode = 'custom'; qa.day = d.value; document.querySelectorAll('[data-act="qa-mode"]').forEach(b => b.classList.remove('on')); }
   if (id === 'qa-f') qa.f = f;
   if (id === 'qa-o') qa.o = o;
   if (id === 'qa-p') qa.p = $('qa-p').value;
-  if (qa.mode !== 'custom' && qa.base) { const fix = f && o ? C.shiftDayOf(qa.base, f, o) : qa.base; if (fix !== d.value) d.value = fix; }
+  if (qa.mode !== 'custom') { const fix = qaAuto(f || null); if (fix !== d.value) d.value = fix; }
+  const chk = f && o ? qaCheck(d.value, f, o) : null;
+  $('qa-when').innerHTML = chk ? `<b>${T('Смена', 'Zmiana')}: ${esc(chk.when)}</b>${chk.block ? `<p class="bad">${esc(chk.block)}</p>` : ''}${chk.warn.map(w => `<p>${esc(w)}</p>`).join('')}${(chk.alt || []).map(x => `<button class="link" data-act="qa-day" data-v="${x}">${T('Записать на', 'Zapisz na')} ${esc(dayName(x))}</button>`).join('')}` : '';
+  $('qa-when').className = `qa-when${chk && (chk.block || chk.warn.length) ? ' warn' : ''}`;
   const min = C.minutesBetween(f, o), hrs = min / 60, p = Number($('qa-p').value);
   $('qa-dur').innerHTML = min ? `<span>${T('Отработано', 'Przepracowano')}</span><b>${Math.floor(min / 60)} ${T('ч', 'h')} ${String(min % 60).padStart(2, '0')} min</b>` : '';
   const box = $('qa-prev');
@@ -761,13 +795,20 @@ function qaUpdate(ev) {
 
 function qaSave() {
   const f = $('qa-f').value, o = $('qa-o').value, p = Math.round(Number($('qa-p').value)), btn = $('qa-save');
-  let day = $('qa-d').value;
+  const day = qa.mode === 'custom' ? $('qa-d').value : qaAuto(f);
   const min = C.minutesBetween(f, o);
   const fail = t => { btn.textContent = t; btn.classList.add('err'); haptic.err(); setTimeout(() => { btn.textContent = T('Сохранить смену', 'Zapisz zmianę'); btn.classList.remove('err'); }, 1400); };
   if (!RE_DAY.test(day)) return fail(T('Укажи дату', 'Podaj datę'));
   if (!min || min > 16 * 60) return fail(T('Проверь время смены', 'Sprawdź godziny zmiany'));
   if (!(p > 0 && p <= 100000)) return fail(T('Укажи пики', 'Podaj piki'));
-  if (qa.mode !== 'custom') day = C.shiftDayOf(qa.base || day, f, o);
+  const chk = qaCheck(day, f, o), key = [day, f, o, p, STATE.curSt].join('|');
+  if (chk && chk.block) return fail(T('Смена ещё не началась', 'Zmiana jeszcze się nie zaczęła'));
+  if (chk && chk.warn.length && qa.ok !== key) {
+    qa.ok = key; haptic.err();
+    btn.textContent = T(`${dayName(day)} — верно? Нажми ещё раз`, `${dayName(day)} — dobrze? Naciśnij jeszcze raz`);
+    btn.classList.add('warn');
+    return;
+  }
   qaReset();
   const now = new Date();
   DB.entries.push({ id: Date.now(), station: STATE.curSt, shiftDate: day, peaks: p, hours: Math.round(min / 60 * 100) / 100, from: f, to: o,
@@ -776,7 +817,7 @@ function qaSave() {
   btn.textContent = T('Сохранено', 'Zapisano'); btn.classList.add('ok');
   setTimeout(() => { renderPeaks(); }, 700);
   pushRank();
-  toast(`${T('Записано', 'Zapisano')}: ${p} ${T('шт', 'szt.')}, ${C.ST[STATE.curSt].name}`);
+  toast(`${T('Записано', 'Zapisano')}: ${p} ${T('шт', 'szt.')}, ${C.ST[STATE.curSt].name} · ${dayName(day)}`);
 }
 
 function renderPeaksMonth() {
@@ -1651,7 +1692,8 @@ const ACT = {
     DB.mainSt = cleanMain(STATE.stPick); save(); haptic.ok(); closeSheet();
     toast(`${T('Свои станции', 'Moje stanowiska')}: ${DB.mainSt.map(k => C.ST[k].name).join(', ')}`);
     const top = STATE.stack[STATE.stack.length - 1] || STATE.tab; (RENDER[top] || renderAll)(); },
-  'qa-mode': el => { qa.mode = el.dataset.v; qa.f = qa.o = null; haptic.pick(); renderForm(); },
+  'qa-mode': el => { qa.mode = el.dataset.v; qa.f = qa.o = null; qa.ok = ''; haptic.pick(); renderForm(); },
+  'qa-day': el => { qa.mode = 'custom'; qa.day = el.dataset.v; qa.ok = ''; haptic.pick(); renderForm(); },
   'qa-save': () => qaSave(),
   'del-entry': el => confirmSheet(T('Удалить запись?', 'Usunąć wpis?'), T('Премия за месяц пересчитается.', 'Premia za miesiąc się przeliczy.'), T('Удалить', 'Usuń'), () => {
     DB.entries = DB.entries.filter(e => e.id !== +el.dataset.id); save(); renderPeaks(); pushRank(); toast(T('Запись удалена', 'Wpis usunięty')); }),

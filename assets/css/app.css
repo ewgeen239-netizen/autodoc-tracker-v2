@@ -274,6 +274,13 @@ input,textarea,select{font:inherit;color:var(--text)}
 .form{margin-top:12px}
 .form-h{font:600 20px/1.2 var(--f-num);margin-bottom:12px}
 .form .grid2{margin-bottom:10px}
+.qa-when{font-size:13.5px;color:var(--sub);margin:0 0 10px}
+.qa-when:empty{display:none}
+.qa-when b{color:var(--text);font-weight:600}
+.qa-when p{margin:4px 0 0;color:var(--warn)}
+.qa-when p.bad{color:var(--bad)}
+.qa-when .link{display:block;margin-top:4px}
+.btn.warn{background:var(--warn);color:#16191C}
 .dur{display:flex;justify-content:space-between;color:var(--sub);font-size:13.5px;margin:0 0 10px;min-height:20px}
 .dur b{color:var(--text);font:600 16px var(--f-num)}
 .preview{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0 12px}
